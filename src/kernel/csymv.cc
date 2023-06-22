@@ -569,7 +569,8 @@ pipe_barrier(PIPE_ALL);
             set_flag(PIPE_V, PIPE_MTE2, 2); // ub_x_block_real_ptr done
             set_flag(PIPE_V, PIPE_MTE2, 3); // ub_x_block_imag_ptr done
         }
-
+		set_flag(PIPE_V, PIPE_S, 3);
+        wait_flag(PIPE_V, PIPE_S, 3);
         hablas_complex_vector_scalar_mul(ub_tmp_block_ptr,
                                         ub_tmp_block_ptr + 128 * 2,
                                         ub_res_block_real_ptr,
