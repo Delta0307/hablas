@@ -45,7 +45,6 @@ HACL_INLINE __aicore__ void hablas_load_matrix_gm2ub(__ub__ half *ub_ptr,
 {
     if (m_real % 16 || (stride - m_real) % 16) {
         for (int i = 0; i < n_real; ++i) {
-pipe_barrier(PIPE_ALL);
             _memcpy(ub_ptr + i * m_real_pad, gm_ptr + i * stride, 1, m_real_pad / 16, 0, 0);
         }
     }
