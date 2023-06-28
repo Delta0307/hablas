@@ -604,7 +604,9 @@ pipe_barrier(PIPE_ALL);
         set_flag(PIPE_MTE2, PIPE_V, 3);
         wait_flag(PIPE_MTE2, PIPE_V, 3);
         hablas_complex_to_real_imag(ub_y_block_imag_ptr, ub_y_block_imag_ptr, ub_separate_vector_ptr, m_real_pad, 1, m_real, 1);
- 
+		
+		set_flag(PIPE_V, PIPE_S, 3);
+        wait_flag(PIPE_V, PIPE_S, 3);
         hablas_complex_vector_scalar_mul(ub_tmp_block_ptr,
                                          ub_tmp_block_ptr + 128 * 2,
                                          ub_y_block_real_ptr,
