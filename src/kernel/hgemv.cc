@@ -44,7 +44,8 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
 
     int64_t m_remain = M % m;
     int64_t n_remain = N % n;
-    
+    int64_t x_remain;
+    int64_t y_remain;
     int64_t m_real_pad = m;
     int64_t n_real_pad = n;
     int64_t m_real = m;
@@ -69,6 +70,8 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
     if (trans == HABLAS_OP_N) {
         x_size = n;
         y_size = m;
+        x_remain = n_remain;
+        y_remain = m_remain;
         x_tiles = n_tiles;
         x_real = n;
         y_real = m;
@@ -77,6 +80,8 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
     } else {
         x_size = m;
         y_size = n;
+        x_remain = m_remain;
+        y_remain = n_remain;
         x_tiles = m_tiles;
         x_real = m;
         y_real = n;
@@ -125,15 +130,15 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
             } else {
                 int64_t load_data_num = (2 * UB_HALF_64KB) / incy * incy;
                 if (load_data_num == 0) load_data_num++;
-                int64_t loop = y_real_pad * incy / load_data_num;
-                int64_t remain = y_real_pad * incy % load_data_num;
+                int64_t loop = (y_real * incy - incy + 1) / load_data_num;
+                int64_t remain = (y_real * incy - incy + 1) % load_data_num;
                 set_flag(PIPE_S, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_S, PIPE_MTE2, 3);
                     _memcpy(ub_buffer1, Y_ptr + loop_index * load_data_num, load_data_num);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < load_data_num / incy; i++) {
+                    for (int i = 0; i < (load_data_num + incy - 1) / incy; i++) {
                         ub_buffer0[loop_index * load_data_num / incy + i] = ub_buffer1[i * incy];
                     }
                     set_flag(PIPE_S, PIPE_MTE2, 3);
@@ -143,7 +148,7 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                     _memcpy(ub_buffer1, Y_ptr + loop * load_data_num, remain);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < remain / incy; i++) {
+                    for (int i = 0; i < (remain + incy - 1) / incy; i++) {
                         ub_buffer0[loop * load_data_num / incy + i] = ub_buffer1[i * incy];
                     }
                 }
@@ -158,21 +163,25 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
             wait_flag(PIPE_V, PIPE_MTE3, 3);
             _memcpy(result.get_ptr(0), ub_buffer0, y_real_pad / 16, 1, 0, 0, block_t::MATRIX);
         }
+        set_flag(PIPE_V, PIPE_MTE2, 2);
+        wait_flag(PIPE_V, PIPE_MTE2, 2);
         int64_t load_x_total = (x_tiles + x_tile_num - 1) / x_tile_num;
         for (int x_block_index = 0; x_block_index < load_x_total; x_block_index++) {
             // 假设为 m * n 的块，x每次读 m；如果要一起读能读n段, 一共需要读 m_tiles 次, 合并读取则需要 m_tiles / n
             // 在执行循环时, y要读取完毕
-            if (x_block_index == 0) {
-                set_flag(PIPE_V, PIPE_MTE2, 2);
-                wait_flag(PIPE_V, PIPE_MTE2, 2);
-            }
             __gm__ half *X_ptr = d_X + x_block_index * x_tile_num * x_size * incx;
             int64_t x_tile_loop = x_tile_num;
             if (x_block_index == load_x_total - 1 && x_tiles % x_tile_num > 0) {
                 x_tile_loop = x_tiles % x_tile_num;
             }
             int64_t x_block_size = x_size * x_tile_loop;
-            int64_t x_block_size_pad  = (x_block_size & 0xFFFFFFF0) + 16;
+            if (x_block_index == load_x_total - 1 && x_remain > 0) {
+                x_block_size = x_size * (x_tile_loop - 1) + x_remain;
+            }
+            int64_t x_block_size_pad = x_block_size;
+            if (x_block_size % 16 > 0) {
+                x_block_size_pad  = (x_block_size & 0xFFFFFFF0) + 16;
+            }
             
             set_flag(PIPE_M, PIPE_MTE2, 2);
             wait_flag(PIPE_M, PIPE_MTE2, 2);
@@ -184,15 +193,15 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                 } else {
                     int64_t load_data_num = (2 * UB_HALF_64KB) / incx * incx;
                     if (load_data_num == 0) load_data_num++;
-                    int64_t loop = x_block_size_pad * incx / load_data_num;
-                    int64_t remain = x_block_size_pad * incx % load_data_num;
+                    int64_t loop = (x_block_size * incx - incx + 1) / load_data_num;
+                    int64_t remain = (x_block_size * incx - incx + 1) % load_data_num;
                     set_flag(PIPE_S, PIPE_MTE2, 2);
                     for (int loop_index = 0; loop_index < loop; loop_index++) {
                         wait_flag(PIPE_S, PIPE_MTE2, 2);
                         _memcpy(ub_buffer0, X_ptr + loop_index * load_data_num, load_data_num);
                         set_flag(PIPE_MTE2, PIPE_S, 2);
                         wait_flag(PIPE_MTE2, PIPE_S, 2);
-                        for (int i = 0; i < load_data_num / incx; i++) {
+                        for (int i = 0; i < (load_data_num + incx - 1) / incx; i++) {
                             ub_buffer1[loop_index * load_data_num / incx + i] = ub_buffer0[i * incx];
                         }
                         set_flag(PIPE_S, PIPE_MTE2, 2);
@@ -202,7 +211,7 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                         _memcpy(ub_buffer0, X_ptr + loop * load_data_num, remain);
                         set_flag(PIPE_MTE2, PIPE_S, 2);
                         wait_flag(PIPE_MTE2, PIPE_S, 2);
-                        for (int i = 0; i < remain / incx; i++) {
+                        for (int i = 0; i < (remain + incx - 1) / incx; i++) {
                             ub_buffer1[loop * load_data_num / incx + i] = ub_buffer0[i * incx];
                         }
                     }
@@ -220,6 +229,7 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
             wait_flag(PIPE_MTE3, PIPE_MTE1, 2);
             load2d(inputX.get_ptr(0), L1X.get_ptr(0), 0, ((x_block_size + 16 * 16 - 1) / (16 * 16)), 1, false);
             set_flag(PIPE_MTE1, PIPE_M, 2); // 用于同步x和mmad
+            wait_flag(PIPE_MTE1, PIPE_M, 2);
             // A 矩阵执行双缓存
             set_flag(PIPE_M, PIPE_MTE1, 0); // 当矩阵计算完毕再L1 -> L0A1
             set_flag(PIPE_M, PIPE_MTE1, 1); // 当矩阵计算完毕再L1 -> L0A2
@@ -287,9 +297,6 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                     load2d(inputA1.get_ptr(0), L1A.get_ptr(0), 0, (m_real_pad / 16) * (n_real_pad / 16), 1, false);
                 }
                 set_flag(PIPE_MTE1, PIPE_M, 0); // 用于同步A1和mmad
-                if (x_tile_index == 0) {
-                    wait_flag(PIPE_MTE1, PIPE_M, 2);
-                }
                 wait_flag(PIPE_MTE1, PIPE_M, 0);
                 if (trans == HABLAS_OP_N) {
                     mmad(result.get_ptr(0), inputX.get_ptr(x_tile_index * x_size / 16), inputA1.get_ptr(0), 1, n_real, m_real, 0);
@@ -396,8 +403,8 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                 wait_flag(PIPE_V, PIPE_MTE2, 3);
                 int64_t load_data_num = (2 * UB_HALF_64KB) / incy * incy;
                 if (load_data_num == 0) load_data_num++;
-                int64_t loop = y_real_pad * incy / load_data_num;
-                int64_t remain = y_real_pad * incy % load_data_num;
+                int64_t loop = (y_real * incy - incy + 1) / load_data_num;
+                int64_t remain = (y_real * incy - incy + 1) % load_data_num;
                 set_flag(PIPE_MTE3, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
