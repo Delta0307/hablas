@@ -441,7 +441,7 @@ HACL_INLINE __aicore__ void hablas_store_Vector_ub2gm(__gm__ half *dst,
         }
         if ((stride * valid_len) % content)
         {
-            _memcpy(temp, dst + loop * content, (stride * len) % content);
+            _memcpy(temp, dst + loop * content, (stride * valid_len) % content);
             set_flag(PIPE_MTE2, PIPE_S, 3);
             wait_flag(PIPE_MTE2, PIPE_S, 3);
             int iwhile = start_posi;
@@ -453,7 +453,7 @@ HACL_INLINE __aicore__ void hablas_store_Vector_ub2gm(__gm__ half *dst,
             }
             set_flag(PIPE_S, PIPE_MTE3, 3);
             wait_flag(PIPE_S, PIPE_MTE3, 3);
-            _memcpy(dst + loop * content, temp, (stride * len) % content);
+            _memcpy(dst + loop * content, temp, (stride * valid_len) % content);
         }
     }
 }
