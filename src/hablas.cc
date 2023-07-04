@@ -407,6 +407,10 @@ rtError_t hablasHgemv(hablasHandle_t handle,
 {
 
     rtError_t error;
+    if (trans == HABLAS_OP_N && incx == 1 && incy == 1) {
+        error = hablasHgemm(handle, trans, HABLAS_OP_N, M, 1, N, *alpha, h_A, lda, h_X, N, *beta, h_Y, M);
+        return error;
+    }
     rtStream_t stream;
     hablasGetStream(handle, &stream);
     const char *func_name = "hablas_hgemv_kernel";
