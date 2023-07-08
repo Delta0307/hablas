@@ -483,7 +483,7 @@ pipe_barrier(PIPE_ALL);
         int64_t m_real_pad = m_real % 8 ? (m_real & 0xfffffff8) + 8 : m_real; 
 
         __gm__ float *wk_ptr = workspace + row * m * 2;
-        __gm__ float *tmp_gm_ptr = tmp_gm + row * m * 2;
+        __gm__ float *tmp_gm_ptr = tmp_gm + row * m * 2 + 1;
 
 
         // uplo = 1上三角矩阵 

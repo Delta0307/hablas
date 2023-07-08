@@ -649,7 +649,7 @@ rtError_t hablasCsymv(hablasHandle_t handle,
     };
 
     void *workspace = nullptr;
-    error = rtMalloc((void **)&workspace, (int64_t)N * sizeof(float) * 2, RT_MEMORY_HBM);
+    error = rtMalloc((void **)&workspace, (int64_t)(N + 4) * sizeof(float) * 2, RT_MEMORY_HBM);
 
     KernelArgs args;
     if (uplo == HABLAS_FILL_MODE_LOWER)
@@ -830,9 +830,9 @@ rtError_t hablasCtrmv(hablasHandle_t handle,
         int64_t base_block_size;
     };
     void *workspace = nullptr;
-    error = rtMalloc((void **)&workspace, (int64_t)M * sizeof(haComplex) + 16, RT_MEMORY_HBM);
+    error = rtMalloc((void **)&workspace, (int64_t)(M + 4) * sizeof(haComplex), RT_MEMORY_HBM);
     void *workspace1 = nullptr;
-    error = rtMalloc((void **)&workspace1, (int64_t)M * sizeof(haComplex) + 16, RT_MEMORY_HBM);
+    error = rtMalloc((void **)&workspace1, (int64_t)(M + 4) * sizeof(haComplex), RT_MEMORY_HBM);
 
     KernelArgs args;
     if (uplo == HABLAS_FILL_MODE_LOWER)
@@ -1143,7 +1143,7 @@ rtError_t hablasCgemv(hablasHandle_t handle,
     Y_SIZE *= incy;
     
     void *tmp_gm = nullptr;
-    error = rtMalloc((void **)&tmp_gm, (int64_t)Y_SIZE * sizeof(haComplex) + 9, RT_MEMORY_HBM);
+    error = rtMalloc((void **)&tmp_gm, (int64_t)(Y_SIZE + 4) * sizeof(haComplex), RT_MEMORY_HBM);
 
     args.M = M;
     args.N = N;
