@@ -27,7 +27,9 @@ HACL_INLINE __aicore__ void hablas_load_matrix_L1ToUb(__ub__ float* ub, __l1__ f
 HACL_INLINE __aicore__ void mmad_sgemv(__ub__ float *ub_A, __ub__ float *ub_X, __ub__ float *ub_Y, __ub__ float *ub_buffer0, int64_t m_pad, int64_t n_pad, int64_t m, int64_t n, hablasOperation_t trans) {
     if (trans == HABLAS_OP_N) {
         for (int i = 0; i < n; i++) {
-            vec_axpy(ub_Y, ub_A + i * m_pad, *(ub_X + i), m);
+            vec_muls(ub_A + i * m_pad, ub_A + i * m_pad, *(ub_X + i), m);
+            vec_add(ub_Y, ub_Y, ub_A + i * m_pad, m);
+            // vec_axpy(ub_Y, ub_A + i * m_pad, *(ub_X + i), m);s
         }
     } else {
         int m_loop = (m + 64 - 1) / 64;
@@ -118,6 +120,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
     
     int64_t m_real = m;
     int64_t n_real = n;
+    int64_t x_remain;
+    int64_t y_remain;
     int64_t m_real_pad = m;
     int64_t n_real_pad = n;
     int64_t tiles_num;
@@ -139,6 +143,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
     if (trans == HABLAS_OP_N) {
         x_size = n;
         y_size = m;
+        x_remain = n_remain;
+        y_remain = m_remain;
         x_tiles = n_tiles;
         x_real = n;
         y_real = m;
@@ -147,6 +153,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
     } else {
         x_size = m;
         y_size = n;
+        x_remain = m_remain;
+        y_remain = n_remain;
         x_tiles = m_tiles;
         x_real = m;
         y_real = n;
@@ -195,8 +203,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
             } else {
                 int64_t load_data_num = (ub_buffer_size) / incy * incy;
                 if (load_data_num == 0) load_data_num++;
-                int64_t loop = y_real_pad * incy / load_data_num;
-                int64_t remain = y_real_pad * incy % load_data_num;
+                int64_t loop = (y_real * incy - incy + 1) / load_data_num;
+                int64_t remain = (y_real * incy - incy + 1) % load_data_num;
                 set_flag(PIPE_S, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_S, PIPE_MTE2, 3);
@@ -232,7 +240,13 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                 x_tile_loop = x_tiles % x_tile_num;
             }
             int64_t x_block_size = x_size * x_tile_loop;
-            int64_t x_block_size_pad  = (x_block_size + 8 - 1) / 8 * 8;
+            if (x_block_index == load_x_total - 1 && x_remain > 0) {
+                x_block_size = x_size * (x_tile_loop - 1) + x_remain;
+            }
+            int64_t x_block_size_pad = x_block_size;
+            if (x_block_size % 16 > 0) {
+                x_block_size_pad  = (x_block_size & 0xFFFFFFF0) + 16;
+            }
             wait_flag(PIPE_V, PIPE_MTE2, 2);
             if (debug) pipe_barrier(PIPE_ALL);
             {
@@ -243,8 +257,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                 } else {
                     int64_t load_data_num = (ub_buffer_size) / incx * incx;
                     if (load_data_num == 0) load_data_num++;
-                    int64_t loop = x_block_size_pad * incx / load_data_num;
-                    int64_t remain = x_block_size_pad * incx % load_data_num;
+                    int64_t loop = (x_block_size * incx - incx + 1) / load_data_num;
+                    int64_t remain = (x_block_size * incx - incx + 1) % load_data_num;
                     set_flag(PIPE_S, PIPE_MTE2, 3);
                     for (int loop_index = 0; loop_index < loop; loop_index++) {
                         wait_flag(PIPE_S, PIPE_MTE2, 3);
@@ -454,8 +468,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                 wait_flag(PIPE_V, PIPE_MTE2, 3);
                 int64_t load_data_num = (ub_buffer_size) / incy * incy;
                 if (load_data_num == 0) load_data_num++;
-                int64_t loop = y_real_pad * incy / load_data_num;
-                int64_t remain = y_real_pad * incy % load_data_num;
+                int64_t loop =  (y_real * incy - incy + 1) * incy / load_data_num;
+                int64_t remain = (y_real * incy - incy + 1) * incy % load_data_num;
                 set_flag(PIPE_MTE3, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
