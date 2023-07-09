@@ -104,6 +104,10 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
         wait_flag(PIPE_MTE2, PIPE_V, 2);
         vec_muls(uby, uby, beta, n_real_pad);
 
+        set_flag(PIPE_V, PIPE_S, 2);
+        wait_flag(PIPE_V, PIPE_S, 2);
+        _memcpy(output_y.get_ptr(0), uby, 1, n_real_pad / 16, 0, 0, block_t::VECTOR);
+
         set_flag(PIPE_M, PIPE_MTE1, 0);
 
         set_flag(PIPE_V, PIPE_MTE2, 0);
@@ -161,7 +165,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, k_real_pad, n_real_pad, k_real, n_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
                     set_flag(PIPE_V, PIPE_MTE3, 1);
                     wait_flag(PIPE_V, PIPE_MTE3, 1);
@@ -177,7 +182,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, k_real_pad, n_real_pad, k_real, n_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     pipe_barrier(PIPE_V);
                     hablas_load_Matrix_dig_lower(ubA2, mask.get_ptr(0), mask_dia.get_ptr(0), n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
@@ -196,7 +202,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, n_real_pad, k_real_pad, n_real, k_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, n_real_pad, k_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, n_real_pad, k_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
                     set_flag(PIPE_V, PIPE_MTE3, 1);
                     wait_flag(PIPE_V, PIPE_MTE3, 1);
@@ -218,7 +225,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, k_real_pad, n_real_pad, k_real, n_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
                     set_flag(PIPE_V, PIPE_MTE3, 1);
                     wait_flag(PIPE_V, PIPE_MTE3, 1);
@@ -234,7 +242,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, k_real_pad, n_real_pad, k_real, n_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, k_real_pad, n_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     pipe_barrier(PIPE_V);
                     hablas_load_Matrix_dig_upper(ubA2, mask.get_ptr(0), mask_dia.get_ptr(0), n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
@@ -252,7 +261,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                     hablas_load_matrix_gm2ub(ubA1, A_ptr, n_real_pad, k_real_pad, n_real, k_real, lda);
                     set_flag(PIPE_MTE2, PIPE_V, 1);
                     wait_flag(PIPE_MTE2, PIPE_V, 1);
-                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, n_real_pad, k_real_pad, alpha);
+                    hablas_load_input_matrix_ND2zZ(ubA2, ubA1, n_real_pad, k_real_pad, 1.0);
+                    vec_muls(ubA2, ubA2, alpha, k_real_pad * n_real_pad);
                     set_flag(PIPE_V, PIPE_MTE2, 1);
                     set_flag(PIPE_V, PIPE_MTE3, 1);
                     wait_flag(PIPE_V, PIPE_MTE3, 1);
@@ -270,15 +280,8 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
 
             set_flag(PIPE_MTE1, PIPE_M, 0);
             wait_flag(PIPE_MTE1, PIPE_M, 0);
-
-            if(j == 0)
-            {
-                mmad(output_y.get_ptr(0), input_x.get_ptr(0), input_A.get_ptr(0), 1, k_real, n_real, 1);
-            }
-            else
-            {
-                mmad(output_y.get_ptr(0), input_x.get_ptr(0), input_A.get_ptr(0), 1, k_real, n_real, 0);
-            }
+          
+            mmad(output_y.get_ptr(0), input_x.get_ptr(0), input_A.get_ptr(0), 1, k_real, n_real, 0);
             set_flag(PIPE_M, PIPE_MTE1, 0);
         }
 
@@ -292,9 +295,7 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
         set_flag(PIPE_M, PIPE_V, 0);
         wait_flag(PIPE_M, PIPE_V, 0);
 
-        _memcpy(ubya, output_y.get_ptr(0), 1, n_real_pad / 16, 0, 0, block_t::VECTOR);
-
-        vec_add(uby, ubya, uby, n_real_pad);
+        _memcpy(uby, output_y.get_ptr(0), 1, n_real_pad / 16, 0, 0, block_t::VECTOR);
 
         set_flag(PIPE_V, PIPE_MTE3, 3);
         wait_flag(PIPE_V, PIPE_MTE3, 3);
