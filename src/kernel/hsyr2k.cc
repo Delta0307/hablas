@@ -102,7 +102,6 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
     __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_64KB;
 
     set_flag(PIPE_MTE3, PIPE_MTE2, 1);
-    set_flag(PIPE_MTE1, PIPE_MTE2, 0);
     for (int i = 0; i < tiles_per_core; ++i)
     {
         int64_t id = i * block_num + block_idx;
@@ -134,6 +133,17 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
         // prefetch C to ub_c
         __gm__ half *C_ptr = matrixC + (col * ldc + row) * n;
         wait_flag(PIPE_MTE3, PIPE_MTE2, 1);
+        hablas_load_matrix_gm2l1(L1C.get_ptr(0), C_ptr, m_real_pad, n_real_pad, m_real, n_real, ldc);
+        set_flag(PIPE_MTE2, PIPE_MTE1, 0);
+        wait_flag(PIPE_MTE2, PIPE_MTE1, 0);
+        hablas_load_matrix_l12ub(ub_buffer0, L1C.get_ptr(0), m_real_pad, n_real_pad);
+        set_flag(PIPE_MTE1, PIPE_V, 0);
+        wait_flag(PIPE_MTE1, PIPE_V, 0);
+        hablas_load_matrixC_ND2zN(ub_buffer1, ub_buffer0, m_real_pad, n_real_pad);
+        vec_muls(ub_buffer1, ub_buffer1, beta, 2 * UB_HALF_64KB);
+        set_flag(PIPE_V, PIPE_MTE3, 2);
+        wait_flag(PIPE_V, PIPE_MTE3, 2);
+        hablas_load_matrixC_ub2l0(result.get_ptr(0), ub_buffer1, m_real_pad, n_real_pad);
 
         set_flag(PIPE_M, PIPE_MTE1, 0);
         set_flag(PIPE_V, PIPE_MTE2, 0);
@@ -244,7 +254,8 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
 
                 set_flag(PIPE_MTE2, PIPE_V, 1);
                 wait_flag(PIPE_MTE2, PIPE_V, 1);
-                hablas_load_input_matrix_ND2zZ(ubB2, ubB1, B_m, B_n, alpha);
+                hablas_load_input_matrix_ND2zZ(ubB2, ubB1, B_m, B_n, (half)1.0);
+                vec_muls(ubB2, ubB2, alpha, UB_HALF_64KB);
                 set_flag(PIPE_V, PIPE_MTE3, 1);
                 wait_flag(PIPE_V, PIPE_MTE3, 1);
                 hablas_load_input_matrix_ub2l1(L1B.get_ptr(0), ubB2, B_m, B_n);
@@ -258,20 +269,9 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
             }
             set_flag(PIPE_MTE1, PIPE_M, 0);
             wait_flag(PIPE_MTE1, PIPE_M, 0);
-            if (j == 0)
-            {
-                mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 1);
-            }
-            else
-            {
-                mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 0);
-            }
+            mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 0);
             set_flag(PIPE_M, PIPE_MTE1, 0);
         }
-        wait_flag(PIPE_MTE1, PIPE_MTE2, 0);
-        hablas_load_matrix_gm2l1(L1C.get_ptr(0), C_ptr, m_real_pad, n_real_pad, m_real, n_real, ldc);
-        set_flag(PIPE_MTE2, PIPE_MTE1, 0);
-
         wait_flag(PIPE_M, PIPE_MTE1, 0);
         wait_flag(PIPE_V, PIPE_MTE2, 0);
         wait_flag(PIPE_MTE1, PIPE_MTE3, 0);
@@ -285,14 +285,6 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
 
         hablas_store_matrixC_l02ub2ub(ub_buffer1, ub_buffer0, result.get_ptr(0), m_real_pad, n_real_pad);
 
-        set_flag(PIPE_V, PIPE_MTE1, 0);
-        wait_flag(PIPE_V, PIPE_MTE1, 0);
-        wait_flag(PIPE_MTE2, PIPE_MTE1, 0);
-        hablas_load_matrix_l12ub(ub_buffer0, L1C.get_ptr(0), m_real_pad, n_real_pad);
-        set_flag(PIPE_MTE1, PIPE_MTE2, 0);
-        set_flag(PIPE_MTE1, PIPE_V, 0);
-        wait_flag(PIPE_MTE1, PIPE_V, 0);
-        vec_axpy(ub_buffer1, ub_buffer0, beta, m_real_pad * n_real);
         set_flag(PIPE_V, PIPE_MTE1, 0);
         wait_flag(PIPE_V, PIPE_MTE1, 0);
 
@@ -326,5 +318,4 @@ extern "C" __global__ __aicore__ void hablas_hsyr2k_kernel(__gm__ half *matrixA,
         set_flag(PIPE_MTE3, PIPE_MTE2, 1);
     }
     wait_flag(PIPE_MTE3, PIPE_MTE2, 1);
-    wait_flag(PIPE_MTE1, PIPE_MTE2, 0);
 }

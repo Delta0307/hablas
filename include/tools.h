@@ -37,8 +37,7 @@ HACL_INLINE __aicore__ void __memcpy(__gm__ half *gm, __ub__ half *ub, int64_t l
 HACL_INLINE __aicore__ void hablas_load_matrixC_ND2zN(__ub__ half *ub_buffer1,
                                                       __ub__ half *ub_buffer0,
                                                       int64_t m_real_pad,
-                                                      int64_t n_real_pad,
-                                                      half beta)
+                                                      int64_t n_real_pad)
 {
     __ub__ half *dst_list[16], *src_list[16];
     for (int i = 0; i < 16; ++i)
@@ -55,7 +54,6 @@ HACL_INLINE __aicore__ void hablas_load_matrixC_ND2zN(__ub__ half *ub_buffer1,
             src_list[jj] += m_real_pad * 16;
         }
     }
-    vec_muls(ub_buffer1, ub_buffer1, beta, 2 * UB_HALF_64KB);
 }
 
 HACL_INLINE __aicore__ void hablas_load_matrixC_ub2l0(__l0c__ float *l0c,
