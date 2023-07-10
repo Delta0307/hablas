@@ -26,7 +26,7 @@ HACL_INLINE __aicore__ void hablas_fill_zero(__ub__ half *dst,
     if (diag) {
         set_flag(PIPE_V, PIPE_S, 3);
         wait_flag(PIPE_V, PIPE_S, 3);
-        // pipe_barrier(PIPE_ALL);
+
         for (int64_t i = 0; i < m_real; ++i) {
             for (int j = i; j <= i; ++j) {
                 *(dst + i * m_real_pad + j) = 1.0;
@@ -35,7 +35,6 @@ HACL_INLINE __aicore__ void hablas_fill_zero(__ub__ half *dst,
     }
     set_flag(PIPE_S, PIPE_V, 3);
     wait_flag(PIPE_S, PIPE_V, 3);
-    // pipe_barrier(PIPE_ALL);
 }
 
 #ifndef CAMODEL_PROFILING
@@ -51,8 +50,7 @@ extern "C" __global__ __aicore__ void hablas_htrmm_kernel(hablasSideMode_t side,
                                                           __gm__ half *matrixB,
                                                           int64_t ldb,
                                                           __gm__ half *matrixC,
-                                                          int64_t ldc,
-                                                          __gm__ half *temp)
+                                                          int64_t ldc)
 #else
 extern "C" __global__ __aicore__ void hablas_htrmm_kernel(__gm__ half *matrixA,
                                                           __gm__ half *matrixB,
@@ -139,8 +137,6 @@ extern "C" __global__ __aicore__ void hablas_htrmm_kernel(__gm__ half *matrixA,
             *(ub_uplo_matrix + 128 * i + i) = 1.0;
         }
     }
-    pipe_barrier(PIPE_ALL);
-    hablas_store_matrixC_ub2gm(temp, ub_uplo_matrix, 128, 128, 128, 128, 128);
     pipe_barrier(PIPE_ALL);
     if(side == HABLAS_SIDE_LEFT) {      
         int64_t m_tiles  = (M + m - 1) / m;
