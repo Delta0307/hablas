@@ -533,35 +533,5 @@ HACL_INLINE __aicore__ void hablas_load_matrix_diag_gm2ub(__ub__ half *ub_buffer
     {
         _memcpy(ub_buffer0, gm, n_real, m_real / 16, 0, (stride - m_real) / 16);
     }
-    set_flag(PIPE_MTE2, PIPE_S, 2);
-    wait_flag(PIPE_MTE2, PIPE_S, 2);
-    if (uplo == HABLAS_FILL_MODE_LOWER)
-    {
-        for (int col = 0; col < n_real; col++)
-        {
-            for (int row = 0; row < col; row++)
-            {
-                *(ub_buffer0 + col * m_real_pad + row) = 0.0;
-            }
-            if (diag == HABLAS_DIAG_UNIT)
-            {
-                *(ub_buffer0 + col * m_real_pad + col) = 1.0;
-            }
-        }
-    }
-    else
-    {
-        for (int col = 0; col < n_real; col++)
-        {
-            for (int row = col + 1; row < m_real; row++)
-            {
-                *(ub_buffer0 + col * m_real_pad + row) = 0.0;
-            }
-            if (diag == HABLAS_DIAG_UNIT)
-            {
-                *(ub_buffer0 + col * m_real_pad + col) = 1.0;
-            }
-        }
-    }
 }
 #endif
