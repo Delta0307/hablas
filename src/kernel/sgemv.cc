@@ -14,6 +14,12 @@
 constexpr int UB_MAX_FLOAT_SIZE = 62 * 1024;
 constexpr int UB_FLOAT_64KB = 32 * 1024 / 8;
 
+HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, int64_t len, int64_t space) {
+    if (space < 8) {
+        __hacl_details__::__hacl_intrinsic__memcpy_ub_gm(dst, src, 1, 1, 0, 0);
+    }
+}
+
 HACL_INLINE __aicore__ void hablas_load_matrix_gmToL1(__l1__ float *L1, __gm__ float *gm, int64_t m_pad, int64_t n_pad, int64_t m, int64_t n, int64_t lda) {
     for (int i = 0; i < n; i++) {
         _memcpy(L1 + i * m_pad, gm + i * lda, 1, (m + 8 - 1) / 8, 0, 0);
@@ -162,7 +168,7 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
         y_real_pad = n;
     }
 
-    int inputX_size = ub_buffer_size / x_size * x_size;
+    int inputX_size = m * n;
     const int x_tile_num = inputX_size / x_size;
     set_flag(PIPE_MTE3, PIPE_MTE2, 3); // 用于控制当UB将y存储完毕再重新使用
     for (int64_t i = 0; i < tiles_per_core; ++i) {
@@ -211,7 +217,7 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                     _memcpy(ub_buffer1, Y_ptr + loop_index * load_data_num, load_data_num);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < load_data_num / incy; i++) {
+                    for (int i = 0; i < (load_data_num + incy - 1) / incy; i++) {
                         ubY[loop_index * load_data_num / incy + i] = ub_buffer1[i * incy];
                     }
                     set_flag(PIPE_S, PIPE_MTE2, 3);
@@ -221,7 +227,7 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                     _memcpy(ub_buffer1, Y_ptr + loop * load_data_num, remain);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < remain / incy; i++) {
+                    for (int i = 0; i < (remain + incy - 1) / incy; i++) {
                         ubY[loop * load_data_num / incy + i] = ub_buffer1[i * incy];
                     }
                 }
@@ -244,8 +250,8 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                 x_block_size = x_size * (x_tile_loop - 1) + x_remain;
             }
             int64_t x_block_size_pad = x_block_size;
-            if (x_block_size % 16 > 0) {
-                x_block_size_pad  = (x_block_size & 0xFFFFFFF0) + 16;
+            if (x_block_size % 8 > 0) {
+                x_block_size_pad  = (x_block_size + 8 - 1) / 8 * 8;
             }
             wait_flag(PIPE_V, PIPE_MTE2, 2);
             if (debug) pipe_barrier(PIPE_ALL);
@@ -265,7 +271,7 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                         _memcpy(ub_buffer0, X_ptr + loop_index * load_data_num, load_data_num);
                         set_flag(PIPE_MTE2, PIPE_S, 2);
                         wait_flag(PIPE_MTE2, PIPE_S, 2);
-                        for (int i = 0; i < load_data_num / incx; i++) {
+                        for (int i = 0; i < (load_data_num + incx - 1) / incx; i++) {
                             ub_buffer1[loop_index * load_data_num / incx + i] = ub_buffer0[i * incx];
                         }
                         set_flag(PIPE_S, PIPE_MTE2, 3);
@@ -275,7 +281,7 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                         _memcpy(ub_buffer0, X_ptr + loop * load_data_num, remain);
                         set_flag(PIPE_MTE2, PIPE_S, 2);
                         wait_flag(PIPE_MTE2, PIPE_S, 2);
-                        for (int i = 0; i < remain / incx; i++) {
+                        for (int i = 0; i < (remain + incx - 1) / incx; i++) {
                             ub_buffer1[loop * load_data_num / incx + i] = ub_buffer0[i * incx];
                         }
                     }
@@ -468,15 +474,15 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                 wait_flag(PIPE_V, PIPE_MTE2, 3);
                 int64_t load_data_num = (ub_buffer_size) / incy * incy;
                 if (load_data_num == 0) load_data_num++;
-                int64_t loop =  (y_real * incy - incy + 1) * incy / load_data_num;
-                int64_t remain = (y_real * incy - incy + 1) * incy % load_data_num;
+                int64_t loop =  (y_real * incy - incy + 1) / load_data_num;
+                int64_t remain = (y_real * incy - incy + 1) % load_data_num;
                 set_flag(PIPE_MTE3, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
                     _memcpy(ub_buffer1, Y_ptr + loop_index * load_data_num, load_data_num);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < load_data_num / incy; i++) {
+                    for (int i = 0; i < (load_data_num + incy - 1) / incy; i++) {
                         ub_buffer1[i * incy] = ubY[loop_index * load_data_num / incy + i];
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
@@ -489,12 +495,19 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                     _memcpy(ub_buffer1, Y_ptr + loop * load_data_num, remain);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < remain / incy; i++) {
+                    for (int i = 0; i < (remain + incy - 1) / incy; i++) {
                         ub_buffer1[i * incy] = ubY[loop * load_data_num / incy + i];
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
                     wait_flag(PIPE_S, PIPE_MTE3, 3);
-                    _memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain);
+                    int64_t Y_size;
+                    if (trans == HABLAS_OP_N) {
+                        Y_size = M * incy;
+                    } else {
+                        Y_size = N * incy;
+                    }
+
+                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, Y_size);
                 }
             }
         }
