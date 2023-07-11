@@ -434,19 +434,19 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                     _memcpy(ub_buffer1, Y_ptr + loop * load_data_num, remain);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < (remain + incy -) / incy; i++) {
+                    for (int i = 0; i < (remain + incy - 1) / incy; i++) {
                         ub_buffer1[i * incy] = ub_buffer0[loop * load_data_num / incy + i];
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
                     wait_flag(PIPE_S, PIPE_MTE3, 3);
-                    int64_t Y_size;
-                    if (trans == HABLAS_OP_N) {
-                        Y_size = M * incy;
-                    } else {
-                        Y_size = N * incy;
-                    }
+                    // int64_t Y_size;
+                    // if (trans == HABLAS_OP_N) {
+                    //     Y_size = M * incy;
+                    // } else {
+                    //     Y_size = N * incy;
+                    // }
 
-                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, Y_size);
+                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, remain);
                 }
             }
         }
