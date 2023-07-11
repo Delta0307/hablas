@@ -3,7 +3,7 @@
 constexpr int UB_MATRIX_SIZE = 128 * 128;
 constexpr int UB_VECTOR_SIZE = 128;
 constexpr int UB_TMP_BLOCK_SIZE = 128 * 64; // 用于乘法运算存储中间结果
-constexpr int UB_WORKSPACE_SIZE = 128 * 128; // 用于搬运向量gm到ub inc不为1的情况 存储中间搬运结果 
+constexpr int UB_WORKSPACE_SIZE = 128 * 32; // 用于搬运向量gm到ub inc不为1的情况 存储中间搬运结果 
 
 HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, int64_t len, int64_t space) {
     if (space < 8) {
@@ -14,7 +14,7 @@ HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, 
 }
 
 HACL_INLINE __aicore__ void 
-hablas_load_cmatrix_gm2l1(__l1__ float *dst,
+hablas_load_cmatrix_gm2ub(__ub__ float *dst,
                           __gm__ float *src,
                           int64_t m_real,
                           int64_t n_real,
@@ -111,11 +111,7 @@ hablas_matrix_vector_muls_notrans(__ub__ float *dst,
                                   int64_t flag)
 {
     for (int64_t n_idx = 0; n_idx < n_real; ++n_idx) {
-        float t = *(src1 + n_idx);
-        set_flag(PIPE_S, PIPE_V, 3);
-        wait_flag(PIPE_S, PIPE_V, 3);
-        if (flag) t = -t; 
-        vec_axpy(dst, src0 + m_real_pad * n_idx, t, m_real);
+        vec_axpy(dst, src0 + m_real_pad * n_idx, *(src1 + n_idx), m_real);
     }
 }
 
@@ -277,21 +273,19 @@ extern "C" __global__ __aicore__ void hablas_strmv_kernel(int64_t uplo,
     // int64_t M = 1024;
     // int64_t lda = 1024;
     // int64_t incx = 1;
+    // int64_t base_block_size = 128;
 
-    Vector<float_8, UB_MATRIX_SIZE / 8, HACL_UB> ub_a_block_real;
-    Vector<float_8, UB_VECTOR_SIZE / 8, HACL_UB> ub_x_block_real;
-    Vector<float_8, UB_VECTOR_SIZE / 8, HACL_UB> ub_res_block_real;
+    Vector<float_8, UB_MATRIX_SIZE * 2 / 8, HACL_UB> ub_a_block;
+    Vector<float_8, UB_VECTOR_SIZE * 2 / 8, HACL_UB> ub_x_block;
+    Vector<float_8, UB_VECTOR_SIZE / 8, HACL_UB> ub_res_block;
     Vector<float_8, UB_TMP_BLOCK_SIZE / 8, HACL_UB> ub_tmp_block;
     Vector<float_8, UB_WORKSPACE_SIZE / 8, HACL_UB> ub_wksp_block;
     Vector<float_8, UB_MATRIX_SIZE / 8, HACL_UB> ub_fill_block;
     
 
-    Vector<float_8, UB_MATRIX_SIZE / 8 , HACL_L1> l1_a_pg_block;
+    Vector<float_8, UB_MATRIX_SIZE * 2 / 8 , HACL_L1> l1_a_pg_block;
 
-    __ub__ float *ub_a_block_real_ptr = ub_a_block_real.get_ptr(0);
-    __ub__ float *ub_x_block_real_ptr = ub_x_block_real.get_ptr(0);
-    __ub__ float *ub_res_block_real_ptr = ub_res_block_real.get_ptr(0);
-    __l1__ float *l1_a_pg_block_ptr = l1_a_pg_block.get_ptr(0);
+    __ub__ float *ub_res_block_ptr = ub_res_block.get_ptr(0);
 
     // 中间存储空间 用来存储转置情况下的中间计算结果
     __ub__ float *ub_tmp_block_ptr = ub_tmp_block.get_ptr(0);
@@ -361,8 +355,15 @@ extern "C" __global__ __aicore__ void hablas_strmv_kernel(int64_t uplo,
     }
     
     set_flag(PIPE_MTE1, PIPE_MTE2, 0); 
+    set_flag(PIPE_MTE1, PIPE_MTE2, 1); 
     set_flag(PIPE_V, PIPE_MTE1, 0);
+    set_flag(PIPE_V, PIPE_MTE1, 1);
+    set_flag(PIPE_V, PIPE_MTE2, 0);
     set_flag(PIPE_V, PIPE_MTE2, 1);
+    set_flag(PIPE_V, PIPE_MTE2, 2);
+    set_flag(PIPE_V, PIPE_MTE2, 3);
+
+    int64_t l1_a_pg_flag = 0;
 
     for (int64_t tiles_idx = 0; tiles_idx < tiles_per_core; ++tiles_idx) {
         int64_t block_index = tiles_idx * block_num + block_idx;
@@ -373,7 +374,7 @@ extern "C" __global__ __aicore__ void hablas_strmv_kernel(int64_t uplo,
         }
         int64_t m_real_pad = m_real % 8 ? (m_real & 0xfffffff8) + 8 : m_real; 
 
-        __gm__ float *wk_ptr = workspace + row * m ;
+        __gm__ float *wk_ptr = workspace + row * m;
 
 
         // uplo = 1上三角矩阵 
@@ -384,7 +385,7 @@ extern "C" __global__ __aicore__ void hablas_strmv_kernel(int64_t uplo,
             k_idx = 0;
             k_dst = row + 1;
         } 
-                 
+
         for (; k_idx < k_dst; ++k_idx) {
             int32_t k_real = m;
             if (k_idx == k_loop - 1 && k_remain > 0) {
@@ -392,93 +393,85 @@ extern "C" __global__ __aicore__ void hablas_strmv_kernel(int64_t uplo,
             }
             int64_t k_real_pad = k_real % 8 ? (k_real & 0xfffffff8) + 8 : k_real;
             __gm__ float *X_ptr = X + m * incx * k_idx;
+            __l1__ float *l1_a_pg_block_ptr = l1_a_pg_block.get_ptr(0) + l1_a_pg_flag * UB_MATRIX_SIZE;
+            __ub__ float *ub_a_block_pg_ptr = ub_a_block.get_ptr(0) + l1_a_pg_flag * UB_MATRIX_SIZE;
+            __ub__ float *ub_x_block_pg_ptr = ub_x_block.get_ptr(0) + l1_a_pg_flag * UB_VECTOR_SIZE;
 
             if (trans == 0) {
                 __gm__ float *A_ptr = A + m * row + k_idx * m * lda ;
 
-                wait_flag(PIPE_MTE1, PIPE_MTE2, 0); // 等待l1_a_pg_block数据使用完成
-                hablas_load_cmatrix_gm2l1(l1_a_pg_block_ptr, A_ptr, m_real, k_real, m_real_pad, k_real_pad, lda);
-                set_flag(PIPE_MTE2, PIPE_MTE1, 0);
-                wait_flag(PIPE_MTE2, PIPE_MTE1, 0);
-
-                wait_flag(PIPE_V, PIPE_MTE1, 0); //等待ub_a_block_real数据使用完成
-                hablas_load_cmatrix_l12ub(ub_a_block_real_ptr, l1_a_pg_block_ptr, m_real_pad, k_real_pad);
-                set_flag(PIPE_MTE1, PIPE_MTE2, 0); //l1_a_pg_block数据使用完成
-
-                set_flag(PIPE_MTE1, PIPE_V, 0);
-                wait_flag(PIPE_MTE1, PIPE_V, 0);
-
+                wait_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag); // 等待l1_a_pg_block数据使用完成
+                hablas_load_cmatrix_gm2ub(ub_a_block_pg_ptr, A_ptr, m_real, k_real, m_real_pad, k_real_pad, lda);
+                set_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag);
+                wait_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag);
 
                 if (k_idx == row) {
-                    hablas_fill_zero(ub_a_block_real_ptr, uplo, diag, m_real, m_real_pad, ub_fill_block_ptr);
+                    hablas_fill_zero(ub_a_block_pg_ptr, uplo, diag, m_real, m_real_pad, ub_fill_block_ptr);
                 }
 
-                wait_flag(PIPE_V, PIPE_MTE2, 1); // 等待ub_x_block_real使用完成
-                hablas_load_cvector_gm2ub(ub_x_block_real_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 1);
-                wait_flag(PIPE_MTE2, PIPE_V, 1);
+                wait_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag + 2); // 等待ub_x_block_real使用完成
+                hablas_load_cvector_gm2ub(ub_x_block_pg_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
+                set_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag + 2);
+                wait_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag + 2);
 
                 if (k_idx == 0 || (((trans - uplo) != 0) && k_idx == row)) {
-                    vec_dup(ub_res_block_real_ptr, (float)0, m);
+                    vec_dup(ub_res_block_ptr, (float)0, m);
                 }
                 set_flag(PIPE_V, PIPE_S, 2);
                 wait_flag(PIPE_V, PIPE_S, 2);
-                hablas_complex_muls_notrans(ub_res_block_real_ptr,
-                                            ub_a_block_real_ptr,
-                                            ub_x_block_real_ptr,
+                hablas_complex_muls_notrans(ub_res_block_ptr,
+                                            ub_a_block_pg_ptr,
+                                            ub_x_block_pg_ptr,
                                             m_real, k_real,
                                             m_real_pad, k_real_pad);
-                set_flag(PIPE_V, PIPE_MTE1, 0); // ub_a_block_real使用完成
-                set_flag(PIPE_V, PIPE_MTE2, 1); // ub_x_block_real使用完成
-
+                set_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag); // ub_a_block_real使用完成
+                set_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag + 2); // ub_x_block_real使用完成
             } else {
                 __gm__ float *A_ptr = A + m * row * lda  + k_idx * m ;
-                wait_flag(PIPE_MTE1, PIPE_MTE2, 0); // 等待l1_a_pg_block数据使用完成
-                hablas_load_cmatrix_gm2l1(l1_a_pg_block_ptr, A_ptr, k_real, m_real, k_real_pad, m_real_pad, lda);
+                wait_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag); // 等待l1_a_pg_block数据使用完成
+                hablas_load_cmatrix_gm2ub(ub_a_block_pg_ptr, A_ptr, k_real, m_real, k_real_pad, m_real_pad, lda);
 
-                set_flag(PIPE_MTE2, PIPE_MTE1, 0);
-                wait_flag(PIPE_MTE2, PIPE_MTE1, 0);
-                wait_flag(PIPE_V, PIPE_MTE1, 0); //等待ub_a_block_real数据使用完成
-
-                hablas_load_cmatrix_l12ub(ub_a_block_real_ptr, l1_a_pg_block_ptr, m_real_pad, k_real_pad);
-
-                set_flag(PIPE_MTE1, PIPE_MTE2, 0); //l1_a_pg_block数据使用完成
-
-                set_flag(PIPE_MTE1, PIPE_V, 0);
-                wait_flag(PIPE_MTE1, PIPE_V, 0);
+                set_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag);
+                wait_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag);
 
                 if (k_idx == row) {
-                    hablas_fill_zero(ub_a_block_real_ptr, uplo, diag, m_real, m_real_pad, ub_fill_block_ptr);
+                    hablas_fill_zero(ub_a_block_pg_ptr, uplo, diag, m_real, m_real_pad, ub_fill_block_ptr);
                 }
 
-                wait_flag(PIPE_V, PIPE_MTE2, 1); // 等待ub_x_block_real使用完成
-                hablas_load_cvector_gm2ub(ub_x_block_real_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 1);
-                wait_flag(PIPE_MTE2, PIPE_V, 1);
+                wait_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag + 2); // 等待ub_x_block_real使用完成
+                hablas_load_cvector_gm2ub(ub_x_block_pg_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
+                set_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag + 2);
+                wait_flag(PIPE_MTE2, PIPE_V, l1_a_pg_flag + 2);
     
                 if (k_idx == 0 || (((trans - uplo) != 0) && k_idx == row)) {
-                    vec_dup(ub_res_block_real_ptr, (float)0, m);
+                    vec_dup(ub_res_block_ptr, (float)0, m);
                 }
-                hablas_complex_muls_trans(ub_res_block_real_ptr,
-                                          ub_a_block_real_ptr,
-                                          ub_x_block_real_ptr,
+                hablas_complex_muls_trans(ub_res_block_ptr,
+                                          ub_a_block_pg_ptr,
+                                          ub_x_block_pg_ptr,
                                           ub_tmp_block_ptr,
                                           m_real, k_real,
                                           m_real_pad, k_real_pad);
-                set_flag(PIPE_V, PIPE_MTE1, 0); // ub_a_block_real使用完成
-                set_flag(PIPE_V, PIPE_MTE2, 1); // ub_x_block_real使用完成
+                set_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag); // ub_a_block_real使用完成
+                set_flag(PIPE_V, PIPE_MTE2, l1_a_pg_flag + 2); // ub_x_block_real使用完成
             }
             if (k_idx == k_dst - 1) {
                 set_flag(PIPE_V, PIPE_MTE3, 0);
             }
+            l1_a_pg_flag = 1 - l1_a_pg_flag;
         }
         wait_flag(PIPE_V, PIPE_MTE3, 0);
         set_flag(PIPE_V, PIPE_S, 0);
         wait_flag(PIPE_V, PIPE_S, 0);
-        hablas_memcpy(wk_ptr, ub_res_block_real_ptr, m_real, M); 
+        hablas_memcpy(wk_ptr, ub_res_block_ptr, m_real, M); 
     }
 
     wait_flag(PIPE_MTE1, PIPE_MTE2, 0); 
+    wait_flag(PIPE_MTE1, PIPE_MTE2, 1); 
     wait_flag(PIPE_V, PIPE_MTE1, 0);
+    wait_flag(PIPE_V, PIPE_MTE1, 1);
+    wait_flag(PIPE_V, PIPE_MTE2, 0);
     wait_flag(PIPE_V, PIPE_MTE2, 1);
+    wait_flag(PIPE_V, PIPE_MTE2, 2);
+    wait_flag(PIPE_V, PIPE_MTE2, 3);
 }
