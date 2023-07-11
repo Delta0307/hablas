@@ -984,6 +984,9 @@ rtError_t hablasStrmv(hablasHandle_t handle,
     args.workspace = workspace;
 
     int base_block_size = 128;
+    if(transA == HABLAS_OP_N) {
+        base_block_size = 64;
+    }
     while (M % base_block_size < 8 && M % base_block_size > 0 && base_block_size > 16)
     {
         base_block_size -= 8;

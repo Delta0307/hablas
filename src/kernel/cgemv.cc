@@ -14,6 +14,14 @@ constexpr int64_t UB_VECTOR_SIZE = BLOCK_DIM;
 constexpr int64_t UB_TMP_BLOCK_SIZE = BLOCK_DIM * 64 * 2; // 用于乘法运算存储中间结果
 constexpr int64_t UB_WORKSPACE_SIZE = BLOCK_DIM * BLOCK_DIM; // 用于搬运向量gm到ub inc不为1的情况 存储中间搬运结果 
 
+HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, int64_t len, int64_t space) {
+    if (space < 8) {
+        __hacl_details__::__hacl_intrinsic__memcpy_ub_gm(dst, src, 1, 1, 0, 0);
+    } else {
+        _memcpy(dst, src, len);
+    }
+}
+ 
 HACL_INLINE __aicore__ void 
 hablas_load_cmatrix_gm2ub(__ub__ float *dst,
                           __gm__ float *src,
@@ -86,17 +94,20 @@ hablas_load_cvector_gm2ub(__ub__ float *dst,
     if (inc == 1) {
         _memcpy(dst, src, valid_len * 2);
     } else {
-        int64_t content = UB_WORKSPACE_SIZE;
-        int64_t loop = valid_len * inc * 2 / content;
-        int64_t remain = valid_len * inc * 2 % content;
-        int64_t start_posi = 0;
-        int64_t iub = 0;
+        int32_t content = UB_WORKSPACE_SIZE;
+        int32_t loop = valid_len * inc * 2 / content;
+        int32_t remain = valid_len * inc * 2 % content;
+        int32_t start_posi = 0;
+        int32_t iub = 0;
+
+        set_flag(PIPE_S, PIPE_MTE2, 0);
         for (int i = 0; i < loop; ++i) {
-            pipe_barrier(PIPE_ALL);
+            wait_flag(PIPE_S, PIPE_MTE2, 0);
             _memcpy(wksp, 
                     src + i * content,
                     content);
-            pipe_barrier(PIPE_ALL);
+            set_flag(PIPE_MTE2, PIPE_S, 0);
+            wait_flag(PIPE_MTE2, PIPE_S, 0);
             int iwhile = start_posi;
             while (iwhile < content) {
                 *(dst + iub) = *(wksp + iwhile);
@@ -104,15 +115,16 @@ hablas_load_cvector_gm2ub(__ub__ float *dst,
                 iwhile = iwhile + inc * 2;
                 iub = iub + 2;
             }
-            pipe_barrier(PIPE_ALL);
+            set_flag(PIPE_S, PIPE_MTE2, 0);
             start_posi = iwhile - content;
         }
         if (remain) {
-            pipe_barrier(PIPE_ALL);
+            wait_flag(PIPE_S, PIPE_MTE2, 0);
             _memcpy(wksp, 
                     src + loop * content,
                     remain);
-            pipe_barrier(PIPE_ALL);
+            set_flag(PIPE_MTE2, PIPE_S, 0);
+            wait_flag(PIPE_MTE2, PIPE_S, 0);
             int iwhile = start_posi;
             while (iub < valid_len * 2 && iwhile < content) {
                 *(dst + iub) = *(wksp + iwhile);
@@ -120,8 +132,9 @@ hablas_load_cvector_gm2ub(__ub__ float *dst,
                 iwhile = iwhile + inc * 2;
                 iub = iub + 2;
             }
-            pipe_barrier(PIPE_ALL);
+            set_flag(PIPE_S, PIPE_MTE2, 0);
         }
+        wait_flag(PIPE_S, PIPE_MTE2, 0);
     }
 }
 
@@ -130,30 +143,57 @@ hablas_store_cvector_ub2gm(__gm__ float *dst,
                            __ub__ float *src, 
                            __ub__ float *wksp,
                           int64_t valid_len, 
-                          int64_t inc) 
+                          int64_t incy,
+                          int64_t space) 
 {
-    if (inc == 1) {
-        _memcpy(dst, src, valid_len * 2);
+    if (incy == 1) {
+        hablas_memcpy(dst, src, valid_len * 2, space);
     } else {
-        int64_t load_data_num = UB_WORKSPACE_SIZE /(inc*2)*(inc*2);
-        if (!load_data_num) ++load_data_num;
-        int64_t loop = (valid_len*inc*2 + load_data_num -1) / load_data_num;
-        int64_t remain = (valid_len * inc * 2)%load_data_num;
-        for (int i = 0; i < loop; ++i) {
-            int64_t real_len = load_data_num;
-            if (i+1==loop && remain != 0)
-                real_len = remain;
-            pipe_barrier(PIPE_ALL);
-            _memcpy(wksp, dst+i*load_data_num, real_len);
-            pipe_barrier(PIPE_ALL);
-            for (int j = 0; j < real_len/(inc*2); ++j) {
-                wksp[j*inc*2] = src[i*load_data_num/inc + j*2];
-                wksp[j*inc*2+1] = src[i*load_data_num/inc + j*2+1];
+        int64_t loop = valid_len * incy * 2 / UB_WORKSPACE_SIZE;
+        int64_t remain = (valid_len * incy) * 2 % UB_WORKSPACE_SIZE;
+
+        int64_t start_posi = 0; // 起始写入位置
+        int isrc_ele = 0;
+        set_flag(PIPE_MTE3, PIPE_MTE2, 0);
+        for (int idx = 0; idx < loop; ++idx) {
+            wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
+            _memcpy(wksp, dst + idx * UB_WORKSPACE_SIZE, UB_WORKSPACE_SIZE);
+            set_flag(PIPE_MTE2, PIPE_S, 0);
+            wait_flag(PIPE_MTE2, PIPE_S, 0);
+
+            int iwhile = start_posi;
+            while (iwhile < UB_WORKSPACE_SIZE) {
+                *(wksp + iwhile) = *(src + isrc_ele);
+                *(wksp + iwhile + 1) = *(src + isrc_ele + 1);
+                iwhile = iwhile + incy * 2;
+                isrc_ele = isrc_ele + 2;
             }
-            pipe_barrier(PIPE_ALL);
-            _memcpy(dst+i*load_data_num, wksp, real_len);
-            pipe_barrier(PIPE_ALL);
+            start_posi = iwhile - UB_WORKSPACE_SIZE; 
+            set_flag(PIPE_S, PIPE_MTE3, 0);
+            wait_flag(PIPE_S, PIPE_MTE3, 0);
+            _memcpy(dst + idx * UB_WORKSPACE_SIZE, wksp, UB_WORKSPACE_SIZE);
+            set_flag(PIPE_MTE3, PIPE_MTE2, 0);
         }
+        if (remain) {
+            wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
+            _memcpy(wksp, dst + loop * UB_WORKSPACE_SIZE, remain);
+            set_flag(PIPE_MTE2, PIPE_S, 0);
+            wait_flag(PIPE_MTE2, PIPE_S, 0);
+
+            int iwhile = start_posi;
+            while (isrc_ele < valid_len * 2 && iwhile < UB_WORKSPACE_SIZE) {
+                *(wksp + iwhile) = *(src + isrc_ele);
+                *(wksp + iwhile + 1) = *(src + isrc_ele + 1);
+                iwhile = iwhile + incy * 2;
+                isrc_ele = isrc_ele + 2;
+            }
+            set_flag(PIPE_S, PIPE_MTE3, 0);
+            wait_flag(PIPE_S, PIPE_MTE3, 0);
+            hablas_memcpy(dst + loop * UB_WORKSPACE_SIZE, wksp, remain, space);
+            set_flag(PIPE_MTE3, PIPE_MTE2, 0);
+
+        }
+        wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
     }
 }
 
@@ -281,9 +321,11 @@ hablas_complex_muls_alpha(__ub__ float *real_dst,
     _memcpy(real_src, real_dst, vaild_len);
     _memcpy(imag_src, imag_dst, vaild_len);
     vec_muls(real_dst, real_src, alpha.a, vaild_len);
-    vec_axpy(real_dst, imag_src, -alpha.b, vaild_len);
-    vec_muls(imag_dst, real_src, alpha.b, vaild_len);
-    vec_axpy(imag_dst, imag_src, alpha.a, vaild_len);
+    vec_muls(imag_dst, imag_src, alpha.b, vaild_len);
+    vec_muls(real_src, real_src, alpha.b, vaild_len);
+    vec_muls(imag_src, imag_src, alpha.a, vaild_len);
+    vec_sub(real_dst, real_dst, imag_dst, vaild_len);
+    vec_add(imag_dst, real_src, imag_src, vaild_len);
     pipe_barrier(PIPE_ALL);
 }
 
@@ -309,8 +351,6 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_y_block_imag;
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_buf_block_real;
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_buf_block_imag;
-    // Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_res_block_real;
-    // Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_res_block_imag;
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_separate_vector;
     Vector<float_8, UB_TMP_BLOCK_SIZE / 8, HACL_UB> ub_tmp_block;
     Vector<float_8, UB_WORKSPACE_SIZE / 8, HACL_UB> ub_wksp_block;
@@ -320,8 +360,6 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
     __ub__ float *ub_x_block_imag_ptr = ub_x_block_imag.get_ptr(0);
     __ub__ float *ub_y_block_real_ptr = ub_y_block_real.get_ptr(0);
     __ub__ float *ub_y_block_imag_ptr = ub_y_block_imag.get_ptr(0);
-    // __ub__ float *ub_res_block_real_ptr = ub_res_block_real.get_ptr(0);
-    // __ub__ float *ub_res_block_imag_ptr = ub_res_block_imag.get_ptr(0);
     __ub__ float *ub_separate_vector_ptr = ub_separate_vector.get_ptr(0);
     __ub__ float *ub_tmp_block_ptr = ub_tmp_block.get_ptr(0);
     __ub__ float *ub_tmp_block_real_ptr = ub_buf_block_real.get_ptr(0);
@@ -393,8 +431,6 @@ pipe_barrier(PIPE_ALL);
         set_flag(PIPE_MTE3, PIPE_S, 0);
         wait_flag(PIPE_MTE3, PIPE_S, 0);
         wait_flag(PIPE_MTE3, PIPE_V, 0); 
-        // vec_dup(ub_y_block_real_ptr, (float)0, m * 2);
-        // vec_dup(ub_y_block_imag_ptr, (float)0, m * 2);
         wait_flag(PIPE_V, PIPE_MTE2, 2);// waiting for ub_y_block_real_ptr
         hablas_load_cvector_gm2ub(ub_y_block_real_ptr, Y_ptr, ub_wksp_block_ptr, m_real, incy);
         set_flag(PIPE_MTE2, PIPE_V, 2);
@@ -455,12 +491,6 @@ pipe_barrier(PIPE_ALL);
                 hablas_complex_to_real_imag(ub_x_block_imag_ptr, ub_x_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
                 hablas_complex_muls_alpha(ub_x_block_real_ptr, ub_x_block_imag_ptr, ub_tmp_block_real_ptr, ub_tmp_block_imag_ptr, alpha, k_real*2);
 
-                // if (k_idx == 0) {
-                //     wait_flag(PIPE_MTE3, PIPE_V, 0); // waiting for ub_res_block_real_ptr
-                //     vec_dup(ub_res_block_real_ptr, (float)0, m * 2);
-                //     vec_dup(ub_res_block_imag_ptr, (float)0, m * 2);
-                // }
-
                 set_flag(PIPE_V, PIPE_S, 0);
                 wait_flag(PIPE_V, PIPE_S, 0);
 
@@ -511,11 +541,6 @@ pipe_barrier(PIPE_ALL);
                 wait_flag(PIPE_MTE2, PIPE_V, 3);
                 hablas_complex_to_real_imag(ub_x_block_imag_ptr, ub_x_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
                 hablas_complex_muls_alpha(ub_x_block_real_ptr, ub_x_block_imag_ptr, ub_tmp_block_real_ptr, ub_tmp_block_imag_ptr, alpha, k_real*2);
-                // if (k_idx == 0) {
-                //     wait_flag(PIPE_MTE3, PIPE_V, 0); // waiting for ub_res_block_real_ptr
-                //     vec_dup(ub_res_block_real_ptr, (float)0, m * 2);
-                //     vec_dup(ub_res_block_imag_ptr, (float)0, m * 2);
-                // }
                 hablas_complex_muls_trans(ub_y_block_real_ptr,
                                           ub_y_block_imag_ptr,
                                           ub_a_block_real_ptr,
@@ -542,7 +567,7 @@ pipe_barrier(PIPE_ALL);
         wait_flag(PIPE_MTE2, PIPE_MTE3, 0);// waiting for tmp_gm_ptr
         set_flag(PIPE_V, PIPE_S, 0);
         wait_flag(PIPE_V, PIPE_S, 0);
-        _memcpy(tmp_gm_ptr, ub_y_block_imag_ptr, m_real_pad * 2);
+        hablas_memcpy(tmp_gm_ptr, ub_y_block_imag_ptr, m_real * 2, m_real*2);
         set_flag(PIPE_MTE3, PIPE_MTE2, 0);
         wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
 
@@ -562,7 +587,7 @@ pipe_barrier(PIPE_ALL);
 
         set_flag(PIPE_V, PIPE_S, 0);
         wait_flag(PIPE_V, PIPE_S, 0);
-        hablas_store_cvector_ub2gm(Y_ptr, ub_y_block_real_ptr, ub_wksp_block_ptr, m_real_pad, incy);
+        hablas_store_cvector_ub2gm(Y_ptr, ub_y_block_real_ptr, ub_wksp_block_ptr, m_real, incy, m_real*incy*2);
         set_flag(PIPE_MTE3, PIPE_V, 0); // waiting for ub_res_block_real_ptr
     }
     
