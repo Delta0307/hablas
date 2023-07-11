@@ -1,5 +1,11 @@
 #include "tools.h"
-
+HACL_INLINE __aicore__ void hablas_memcpy(__gm__ half *dst, __ub__ half *src, int64_t len, int64_t space) {
+    if (space < 16) {
+        __hacl_details__::__hacl_intrinsic__memcpy_ub_gm(dst, src, 1, 1, 0, 0);
+    } else {
+        _memcpy(dst, src, len);
+    }
+}
 extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
 	hablasOperation_t trans,
 	int64_t M,
@@ -405,6 +411,10 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                 if (load_data_num == 0) load_data_num++;
                 int64_t loop = (y_real * incy - incy + 1) / load_data_num;
                 int64_t remain = (y_real * incy - incy + 1) % load_data_num;
+                // int64_t remain_pad = remain;
+                // if (remain_pad % 16) {
+                //     remain_pad = (remain & 0xFFFFFFF0) + 16;;
+                // }
                 set_flag(PIPE_MTE3, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
@@ -429,7 +439,14 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
                     wait_flag(PIPE_S, PIPE_MTE3, 3);
-                    _memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain);
+                    int64_t Y_size;
+                    if (trans == HABLAS_OP_N) {
+                        Y_size = M * incy;
+                    } else {
+                        Y_size = N * incy;
+                    }
+
+                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, Y_size);
                 }
             }
         }
