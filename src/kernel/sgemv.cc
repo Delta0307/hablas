@@ -17,6 +17,8 @@ constexpr int UB_FLOAT_64KB = 32 * 1024 / 8;
 HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, int64_t len, int64_t space) {
     if (space < 8) {
         __hacl_details__::__hacl_intrinsic__memcpy_ub_gm(dst, src, 1, 1, 0, 0);
+    } else {
+        _memcpy(dst, src, len);
     }
 }
 
@@ -500,14 +502,14 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
                     wait_flag(PIPE_S, PIPE_MTE3, 3);
-                    int64_t Y_size;
-                    if (trans == HABLAS_OP_N) {
-                        Y_size = M * incy;
-                    } else {
-                        Y_size = N * incy;
-                    }
+                    // int64_t Y_size;
+                    // if (trans == HABLAS_OP_N) {
+                    //     Y_size = M * incy;
+                    // } else {
+                    //     Y_size = N * incy;
+                    // }
 
-                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, Y_size);
+                    hablas_memcpy(Y_ptr + loop * load_data_num, ub_buffer1, remain, remain);
                 }
             }
         }
