@@ -138,13 +138,16 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                 if (load_data_num == 0) load_data_num++;
                 int64_t loop = (y_real * incy - incy + 1) / load_data_num;
                 int64_t remain = (y_real * incy - incy + 1) % load_data_num;
+                if (remain % 16) {
+                    remain = (remain & 0xFFFFFFF0) + 16;;
+                }
                 set_flag(PIPE_S, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_S, PIPE_MTE2, 3);
                     _memcpy(ub_buffer1, Y_ptr + loop_index * load_data_num, load_data_num);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < (load_data_num + incy - 1) / incy; i++) {
+                    for (int i = 0; i < load_data_num / incy; i++) {
                         ub_buffer0[loop_index * load_data_num / incy + i] = ub_buffer1[i * incy];
                     }
                     set_flag(PIPE_S, PIPE_MTE2, 3);
@@ -411,17 +414,16 @@ extern "C" __global__ __aicore__ void hablas_hgemv_kernel(
                 if (load_data_num == 0) load_data_num++;
                 int64_t loop = (y_real * incy - incy + 1) / load_data_num;
                 int64_t remain = (y_real * incy - incy + 1) % load_data_num;
-                // int64_t remain_pad = remain;
-                // if (remain_pad % 16) {
-                //     remain_pad = (remain & 0xFFFFFFF0) + 16;;
-                // }
+                if (remain % 16) {
+                    remain = (remain & 0xFFFFFFF0) + 16;;
+                }
                 set_flag(PIPE_MTE3, PIPE_MTE2, 3);
                 for (int loop_index = 0; loop_index < loop; loop_index++) {
                     wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
                     _memcpy(ub_buffer1, Y_ptr + loop_index * load_data_num, load_data_num);
                     set_flag(PIPE_MTE2, PIPE_S, 3);
                     wait_flag(PIPE_MTE2, PIPE_S, 3);
-                    for (int i = 0; i < (load_data_num + incy - 1) / incy; i++) {
+                    for (int i = 0; i < load_data_num / incy; i++) {
                         ub_buffer1[i * incy] = ub_buffer0[loop_index * load_data_num / incy + i];
                     }
                     set_flag(PIPE_S, PIPE_MTE3, 3);
