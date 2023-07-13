@@ -80,28 +80,34 @@ extern "C" __global__ __aicore__ void hablas_htrmm_kernel(__gm__ half *matrixA,
 #endif
 
     int64_t m = 128;
-    int64_t n = 128;
+    int64_t n = 256;
 
     while (M % m < 16 && M % m > 0 && m > 0 && M >= 16) {
         m -= 16;
     }
 
-    // __ub__ half *ubA1 = ub.get_ptr(0);
-    // __ub__ half *ubA2 = ubA1 + UB_HALF_64KB;
-    // __ub__ half *ubB1 = ubA2 + UB_HALF_64KB;
-    // __ub__ half *ubB2 = ubB1 + UB_HALF_64KB;
+    __ub__ half *ubA1;
+    __ub__ half *ubA2;
+    __ub__ half *ubB1;
+    __ub__ half *ubB2;
+    __ub__ half *ub_uplo_matrix;
 
-    // __ub__ half *ub_buffer0 = ub.get_ptr(0);
-    // __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_64KB;
-
-    __ub__ half *ubA1 = ub.get_ptr(0);
-    __ub__ half *ubA2 = ubA1 + UB_MATRIX_SIZE;
-    __ub__ half *ubB1 = ubA2 + UB_MATRIX_SIZE;
-    __ub__ half *ubB2 = ubB1 + UB_MATRIX_SIZE;
-
-    __ub__ half *ub_buffer0 = ubB2 + UB_MATRIX_SIZE;
-    __ub__ half *ub_buffer1 = ub_buffer0 + UB_MATRIX_SIZE;
-    __ub__ half *ub_uplo_matrix = ub_buffer1 + UB_MATRIX_SIZE;
+    __ub__ half *ub_buffer0 = ub.get_ptr(0);
+    __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_64KB;
+    if(side == HABLAS_SIDE_LEFT) {
+        ubA1 = ub.get_ptr(0);
+        ubA2 = ubA1 + UB_MATRIX_SIZE;
+        ubB1 = ubA2 + UB_MATRIX_SIZE;
+        ubB2 = ubB1 + 2 * UB_MATRIX_SIZE;
+        ub_uplo_matrix = ubB2 + 2 * UB_MATRIX_SIZE;   
+    }
+    else {   //side == HABLAS_SIDE_RIGHT
+        ubB1 = ub.get_ptr(0);
+        ubB2 = ubB1 + UB_MATRIX_SIZE;
+        ubA1 = ubB2 + UB_MATRIX_SIZE;
+        ubA2 = ubA1 + 2 * UB_MATRIX_SIZE;
+        ub_uplo_matrix = ubA2 + 2 * UB_MATRIX_SIZE;
+    } 
 
     if (uplo) {
         __hacl_details__::__hacl_intrinsic_move_mask(128);
@@ -214,8 +220,8 @@ extern "C" __global__ __aicore__ void hablas_htrmm_kernel(__gm__ half *matrixA,
                             set_flag(PIPE_MTE2, PIPE_V, 0);
                             wait_flag(PIPE_MTE2, PIPE_V, 0);
 
-                            set_flag(PIPE_MTE2, PIPE_S, 0);
-                            wait_flag(PIPE_MTE2, PIPE_S, 0); 
+                            // set_flag(PIPE_MTE2, PIPE_S, 0);
+                            // wait_flag(PIPE_MTE2, PIPE_S, 0); 
                             hablas_fill_zero(ubA1, uplo, diag, m_real, m_real_pad, ub_uplo_matrix);
 
                             hablas_load_input_matrix_ND2zZ(ubA2, ubA1, m_real_pad, k_real_pad, (half)1.0);
