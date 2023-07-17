@@ -8,11 +8,11 @@ typedef struct {
 typedef float2 T;
 typedef float HT;
 
-constexpr int64_t BLOCK_DIM = 96;
-constexpr int64_t UB_MATRIX_SIZE = BLOCK_DIM * BLOCK_DIM;
-constexpr int64_t UB_VECTOR_SIZE = BLOCK_DIM;
-constexpr int64_t UB_TMP_BLOCK_SIZE = BLOCK_DIM * 64 * 2; // 用于乘法运算存储中间结果
-constexpr int64_t UB_WORKSPACE_SIZE = BLOCK_DIM * BLOCK_DIM; // 用于搬运向量gm到ub inc不为1的情况 存储中间搬运结果 
+constexpr int64_t M_SIZE = 96;
+constexpr int64_t K_SIZE = 96;
+constexpr int64_t UB_MATRIX_SIZE = M_SIZE*K_SIZE;
+constexpr int64_t UB_TMP_BLOCK_SIZE = M_SIZE*64*2; // 用于乘法运算存储中间结果
+constexpr int64_t UB_WORKSPACE_SIZE = M_SIZE*K_SIZE; // 用于搬运向量gm到ub inc不为1的情况 存储中间搬运结果 
 
 HACL_INLINE __aicore__ void hablas_memcpy(__gm__ float *dst, __ub__ float *src, int64_t len, int64_t space) {
     if (space < 8) {
@@ -49,38 +49,74 @@ hablas_complex_to_real_imag(__ub__ float *dst,
                             int64_t m_real,
                             int64_t n_real) 
 {
-     int64_t loop = m_real * 2 / 64;
+    int64_t loop = m_real * 2 / 64;
     int64_t remain = m_real * 2 % 64;
-
-    for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
-        __hacl_details__::__hacl_intrinsic_move_mask(64);
-        __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-            dst + loop_idx * 64,
-            src + loop_idx * 64,
-            vector + loop_idx * 64,
-            n_real,// repeat times
-            m_real_pad * 2 / 8, // dst repeat stride
-            m_real_pad * 2 / 8, // src0 repeat stride
-            0, // src1 repeat stride
-            1,// dst block stride
-            1,// src0 block stride
-            1// src1 block stride
-        );
+    int64_t n_max = 255;
+    int64_t n_loop = n_real/255;
+    int64_t n_remain = n_real%255;
+    for (int i = 0; i < n_loop; ++i) {
+        for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
+            __hacl_details__::__hacl_intrinsic_move_mask(64);
+            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+                dst + loop_idx * 64 + i*255*m_real_pad*2,
+                src + loop_idx * 64 + i*255*m_real_pad*2,
+                vector + loop_idx * 64,
+                255,// repeat times
+                m_real_pad * 2 / 8, // dst repeat stride
+                m_real_pad * 2 / 8, // src0 repeat stride
+                0, // src1 repeat stride
+                1,// dst block stride
+                1,// src0 block stride
+                1// src1 block stride
+            );
+        }
+        if (remain) {
+            __hacl_details__::__hacl_intrinsic_move_mask(remain);
+            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+                dst + loop * 64 + i*255*m_real_pad*2,
+                src + loop * 64 + i*255*m_real_pad*2,
+                vector + loop * 64,
+                255,// repeat times
+                m_real_pad * 2 / 8, // dst repeat stride
+                m_real_pad * 2 / 8, // src0 repeat stride
+                0, // src1 repeat stride
+                1,// dst block stride
+                1,// src0 block stride
+                1// src1 block stride
+            );
+        }
     }
-    if (remain) {
-        __hacl_details__::__hacl_intrinsic_move_mask(remain);
-        __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-            dst + loop * 64,
-            src + loop * 64,
-            vector + loop * 64,
-            n_real,// repeat times
-            m_real_pad * 2 / 8, // dst repeat stride
-            m_real_pad * 2 / 8, // src0 repeat stride
-            0, // src1 repeat stride
-            1,// dst block stride
-            1,// src0 block stride
-            1// src1 block stride
-        );
+    if (n_remain != 0) {
+        for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
+            __hacl_details__::__hacl_intrinsic_move_mask(64);
+            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+                dst + loop_idx * 64 + n_loop*255*m_real_pad*2,
+                src + loop_idx * 64 + n_loop*255*m_real_pad*2,
+                vector + loop_idx * 64,
+                n_remain,// repeat times
+                m_real_pad * 2 / 8, // dst repeat stride
+                m_real_pad * 2 / 8, // src0 repeat stride
+                0, // src1 repeat stride
+                1,// dst block stride
+                1,// src0 block stride
+                1// src1 block stride
+            );
+        }
+        if (remain) {
+            __hacl_details__::__hacl_intrinsic_move_mask(remain);
+            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+                dst + loop * 64 + n_loop*255*m_real_pad*2,
+                src + loop * 64 + n_loop*255*m_real_pad*2,
+                vector + loop * 64,
+                n_remain,// repeat times
+                m_real_pad * 2 / 8, // dst repeat stride
+                m_real_pad * 2 / 8, // src0 repeat stride
+                0, // src1 repeat stride
+                1,// dst block stride
+                1,// src0 block stride
+                1// src1 block stride
+            );
+        }
     }
 }
 
@@ -201,6 +237,7 @@ HACL_INLINE __aicore__ void
 hablas_matrix_vector_muls_notrans(__ub__ float *dst,
                                   __ub__ float *src0,
                                   __ub__ float *src1,
+                                  __ub__ float *tmp,
                                   int64_t m_real,
                                   int64_t n_real,
                                   int64_t m_real_pad,
@@ -209,9 +246,11 @@ hablas_matrix_vector_muls_notrans(__ub__ float *dst,
 {
     for (int64_t n_idx = 0; n_idx < n_real; ++n_idx) {
         float t = *(src1 + n_idx * 2);
+        if (flag) t = -t; 
         set_flag(PIPE_S, PIPE_V, 3);
         wait_flag(PIPE_S, PIPE_V, 3);
-        if (flag) t = -t; 
+        // vec_muls(tmp, src0+m_real_pad*n_idx, t, m_real);
+        // vec_add(dst, dst, tmp, m_real);
         vec_axpy(dst, src0 + m_real_pad * n_idx, t, m_real);
     }
 }
@@ -298,15 +337,16 @@ hablas_complex_muls_notrans(__ub__ float *real_dst,
                             __ub__ float *imag_src0,
                             __ub__ float *real_src1,
                             __ub__ float *imag_src1,
+                            __ub__ float *tmp,
                             int64_t m_real,
                             int64_t n_real,
                             int64_t m_real_pad,
                             int64_t n_real_pad) 
 {
-    hablas_matrix_vector_muls_notrans(real_dst, real_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(real_dst, imag_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 1);
-    hablas_matrix_vector_muls_notrans(imag_dst, real_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(imag_dst, imag_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(real_dst, real_src0, real_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(real_dst, imag_src0, imag_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 1);
+    hablas_matrix_vector_muls_notrans(imag_dst, real_src0, imag_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(imag_dst, imag_src0, real_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
 }
 
 HACL_INLINE __aicore__ void
@@ -345,13 +385,13 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
 {
 	Vector<float_8, UB_MATRIX_SIZE / 8 * 2, HACL_UB> ub_a_block_real;
     Vector<float_8, UB_MATRIX_SIZE / 8 * 2, HACL_UB> ub_a_block_imag;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_x_block_real;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_x_block_imag;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_y_block_real;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_y_block_imag;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_buf_block_real;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_buf_block_imag;
-    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_separate_vector;
+    Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_x_block_real;
+    Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_x_block_imag;
+    Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_y_block_real;
+    Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_y_block_imag;
+    Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_buf_block_real;
+    Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_buf_block_imag;
+    Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_separate_vector;
     Vector<float_8, UB_TMP_BLOCK_SIZE / 8, HACL_UB> ub_tmp_block;
     Vector<float_8, UB_WORKSPACE_SIZE / 8, HACL_UB> ub_wksp_block;
     __ub__ float *ub_a_block_real_ptr = ub_a_block_real.get_ptr(0);
@@ -367,25 +407,27 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
     // 中间存储空间 用来搬运向量
     __ub__ float *ub_wksp_block_ptr = ub_wksp_block.get_ptr(0);
 pipe_barrier(PIPE_ALL);
-    vec_dup(ub_separate_vector_ptr, float(0), UB_VECTOR_SIZE * 2);
+    vec_dup(ub_separate_vector_ptr, float(0), K_SIZE * 2);
 pipe_barrier(PIPE_ALL);
-    for (int idx = 0; idx < UB_VECTOR_SIZE * 2; idx += 2) {
+    for (int idx = 0; idx < K_SIZE * 2; idx += 2) {
         *(ub_separate_vector_ptr + idx) = 1;
     }
 pipe_barrier(PIPE_ALL);
-    int64_t m = BLOCK_DIM; // 基块大小
+    int64_t m = M_SIZE; // 基块大小
+    int64_t k = K_SIZE;
+
+    while (m > 16 && trans == 0 && (M + m - 1) / m < 30 || trans != 0 && (N + m - 1) / m < 30)
+        m -= 16;
 
     int64_t m_tiles  = (M + m - 1) / m;
-    int64_t n_tiles  = 1;
-    int64_t k_loop   = (N + m - 1) / m;
+    int64_t k_loop   = (N + k - 1) / k;
     int64_t m_remain = M % m;
-    int64_t k_remain = N % m;
+    int64_t k_remain = N % k;
     if (trans != 0) {
         m_tiles  = (N + m - 1) / m;
-        n_tiles  = 1;
-        k_loop   = (M + m - 1) / m;
+        k_loop   = (M + k - 1) / k;
         m_remain = N % m;
-        k_remain = M % m;
+        k_remain = M % k;
     }
 
     _memcpy(ub_wksp_block_ptr, alpha_i, 2);
@@ -405,7 +447,7 @@ pipe_barrier(PIPE_ALL);
     beta.a = *(ub_wksp_block_ptr);
     beta.b = *(ub_wksp_block_ptr + 1);
 
-    int64_t tiles_num = m_tiles * n_tiles;
+    int64_t tiles_num = m_tiles;
     int64_t tiles_per_core = tiles_num / block_num;
     if (block_idx < tiles_num % block_num) {
         ++tiles_per_core;
@@ -419,7 +461,7 @@ pipe_barrier(PIPE_ALL);
     set_flag(PIPE_MTE3, PIPE_V, 0); 
     for (int64_t tiles_idx = 0; tiles_idx < tiles_per_core; ++tiles_idx) {
         int64_t block_index = tiles_idx * block_num + block_idx;
-        int64_t row = block_index / n_tiles;
+        int64_t row = block_index;
         int64_t m_real = m;
         if (row == m_tiles - 1 && m_remain > 0) {
             m_real = m_remain;
@@ -451,15 +493,15 @@ pipe_barrier(PIPE_ALL);
         // 矩阵A在右边 向量X在左边 启用GEMV模式
                  
         for (int64_t k_idx = 0; k_idx < k_loop; ++k_idx) {
-            int64_t k_real = m;
+            int64_t k_real = k;
             if (k_idx == k_loop - 1 && k_remain > 0) {
                 k_real = k_remain;
             }
             int64_t k_real_pad = k_real % 8 ? (k_real & 0xfffffff8) + 8 : k_real;
-            __gm__ float *X_ptr = X + m * incx * k_idx * 2;
+            __gm__ float *X_ptr = X + k * incx * k_idx * 2;
 
             if (trans == 0) {
-                __gm__ float *A_ptr = A + m * row * 2 + k_idx * m * lda * 2;
+                __gm__ float *A_ptr = A + m * row * 2 + k_idx * k * lda * 2;
 
                 wait_flag(PIPE_V, PIPE_MTE2, 0);// waiting for ub_a_block_real_ptr
                 hablas_load_cmatrix_gm2ub(ub_a_block_real_ptr, A_ptr, m_real, k_real, m_real_pad, k_real_pad, lda);
@@ -500,6 +542,7 @@ pipe_barrier(PIPE_ALL);
                                             ub_a_block_imag_ptr,
                                             ub_x_block_real_ptr,
                                             ub_x_block_imag_ptr,
+                                            ub_tmp_block_ptr,
                                             m_real * 2, k_real,
                                             m_real_pad * 2, k_real_pad);
                 set_flag(PIPE_V, PIPE_MTE2, 0); // ub_a_block_real_ptr done
@@ -507,7 +550,7 @@ pipe_barrier(PIPE_ALL);
                 set_flag(PIPE_V, PIPE_MTE2, 2); // ub_x_block_real_ptr done
                 set_flag(PIPE_V, PIPE_MTE2, 3); // ub_x_block_imag_ptr done
             } else {
-                __gm__ float *A_ptr = A + m * row * lda * 2 + k_idx * m * 2;
+                __gm__ float *A_ptr = A + m * row * lda * 2 + k_idx * k * 2;
             
                 wait_flag(PIPE_V, PIPE_MTE2, 0);// waiting for ub_a_block_real_ptr
                 hablas_load_cmatrix_gm2ub(ub_a_block_real_ptr, A_ptr, k_real, m_real, k_real_pad, m_real_pad, lda);
