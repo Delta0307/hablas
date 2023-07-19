@@ -416,7 +416,7 @@ pipe_barrier(PIPE_ALL);
     int64_t m = M_SIZE; // 基块大小
     int64_t k = K_SIZE;
 
-    while (m > 16 && trans == 0 && (M + m - 1) / m < 20 || trans != 0 && (N + m - 1) / m < 20)
+    while ((m > 16) && ((trans == 0 && (M + m - 1) / m < 20 )|| (trans != 0 && (N + m - 1) / m < 20)))
         m -= 16;
 
     int64_t m_tiles  = (M + m - 1) / m;
