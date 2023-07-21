@@ -92,8 +92,13 @@ extern "C" __global__ __aicore__ void hablas_sgemv_kernel(
     int64_t m;
     int64_t n;
     if (trans == HABLAS_OP_N) {
-       m = 512;
-       n = 16;
+        if(n / m > 4) {
+          m = 32;
+          n = 256;
+        } else {
+          m = 512;
+          n = 16;
+        }
     } else {
        m = 128;
        n = 64; // n 不能大于等于256
