@@ -35,23 +35,52 @@ HACL_INLINE __aicore__ void __memcpy(__gm__ half *gm, __ub__ half *ub, int64_t l
     }
 }
 
-HACL_INLINE __aicore__ void hablas_load_matrix_gm2ub(__ub__ half *ub_ptr,
-                                                     __gm__ half *gm_ptr, 
-                                                     int64_t m_real, 
-                                                     int64_t m_real_pad, 
-                                                     int64_t n_real, 
-                                                     int64_t n_real_pad, 
-                                                     int64_t stride) 
+HACL_INLINE __aicore__ void hablas_load_matrix_gm2ub(__ub__ half *ub_buffer0,
+                                                     __gm__ half *gm,
+                                                     int64_t m_real,
+                                                     int64_t m_real_pad,
+                                                     int64_t n_real,
+                                                     int64_t n_real_pad,
+                                                     int64_t stride)
 {
     if (m_real % 16 || (stride - m_real) % 16) {
-        for (int i = 0; i < n_real; ++i) {
-            _memcpy(ub_ptr + i * m_real_pad, gm_ptr + i * stride, 1, m_real_pad / 16, 0, 0);
+        if (m_real != m_real_pad) {
+            for (int j = 0; j < n_real; ++j) {
+                _memcpy(ub_buffer0 + j * m_real_pad, gm + j * stride, 1, m_real_pad / 16, 0, 0);
+            }
+        } else {
+            int64_t remain = n_real % 16;
+            int64_t nburst = n_real / 16;
+            if (nburst)
+                for (int j = 0; j < 16; ++j) {
+                    _memcpy(ub_buffer0 + j * m_real_pad, gm + j * stride, nburst, m_real / 16, (m_real * 16 - m_real) / 16, (stride * 16 - m_real) / 16);
+                }
+            for (int j = 0; j < remain; ++j) {
+                _memcpy(ub_buffer0 + (nburst * 16 + j) * m_real_pad, gm + (nburst * 16 + j) * stride, 1, m_real_pad / 16, 0, 0);
+            }
         }
-    }
-    else {
-        _memcpy(ub_ptr, gm_ptr, n_real, m_real / 16, 0, (stride - m_real) / 16);
+    } else {
+        _memcpy(ub_buffer0, gm, n_real, m_real / 16, 0, (stride - m_real) / 16);
     }
 }
+
+// HACL_INLINE __aicore__ void hablas_load_matrix_gm2ub(__ub__ half *ub_ptr,
+//                                                      __gm__ half *gm_ptr, 
+//                                                      int64_t m_real, 
+//                                                      int64_t m_real_pad, 
+//                                                      int64_t n_real, 
+//                                                      int64_t n_real_pad, 
+//                                                      int64_t stride) 
+// {
+//     if (m_real % 16 || (stride - m_real) % 16) {
+//         for (int i = 0; i < n_real; ++i) {
+//             _memcpy(ub_ptr + i * m_real_pad, gm_ptr + i * stride, 1, m_real_pad / 16, 0, 0);
+//         }
+//     }
+//     else {
+//         _memcpy(ub_ptr, gm_ptr, n_real, m_real / 16, 0, (stride - m_real) / 16);
+//     }
+// }
 
 HACL_INLINE __aicore__ void hablas_load_vector_gm2ub(__ub__ half *dst, 
                                                      __gm__ half *src, 
@@ -159,9 +188,9 @@ HACL_INLINE __aicore__ void hablas_fill_zero(__ub__ half *dst,
         1,// src0 block stride
         1// src1 block stride
     );
+    set_flag(PIPE_V, PIPE_S, 3);
+    wait_flag(PIPE_V, PIPE_S, 3);
     if (diag) {
-        set_flag(PIPE_V, PIPE_S, 3);
-        wait_flag(PIPE_V, PIPE_S, 3);
         for (int64_t i = 0; i < m_real; ++i) {
             for (int j = i; j <= i; ++j) {
                 *(dst + i * m_real_pad + j) = 1.0;
@@ -196,6 +225,7 @@ void hablas_htrmv_kernel(int64_t uplo,
     // int64_t M = 1024;
     // int64_t lda = 1024;
     // int64_t incx = 1;
+    // int64_t base_block_size = 128;
     Vector<float_8, L0C_MAX_SINGLE_SIZE / 8, HACL_L0C> result;
     Vector<half_16, L0AB_MAX_HALF_SIZE / 16, HACL_L0A> inputA;
     Vector<half_16, L0AB_MAX_HALF_SIZE / 16, HACL_L0B> inputB;
@@ -222,8 +252,6 @@ void hablas_htrmv_kernel(int64_t uplo,
             128 / 16, // dst repeat stride
             1 // dst block stride
         );
-        set_flag(PIPE_V, PIPE_S, 2);
-        wait_flag(PIPE_V, PIPE_S, 2);
         for (int i = 0; i < 128; ++i) {
             vec_dup(ub_uplo_matrix + 128 * i, half(1.0), i + 1);
         }
@@ -236,8 +264,6 @@ void hablas_htrmv_kernel(int64_t uplo,
             128 / 16, // dst repeat stride
             1 // dst block stride
         );
-        set_flag(PIPE_V, PIPE_S, 2);
-        wait_flag(PIPE_V, PIPE_S, 2);
         for (int i = 0; i < 128; ++i) {
             set_flag(PIPE_S, PIPE_V, 2);
             wait_flag(PIPE_S, PIPE_V, 2);
@@ -247,7 +273,7 @@ void hablas_htrmv_kernel(int64_t uplo,
             *(ub_uplo_matrix + 128 * i + i) = 1.0;
         }
     }
-pipe_barrier(PIPE_ALL);
+// pipe_barrier(PIPE_ALL);
 
     int64_t m = base_block_size;
 
@@ -272,6 +298,21 @@ pipe_barrier(PIPE_ALL);
     set_flag(PIPE_M, PIPE_MTE1, 1);
     set_flag(PIPE_V, PIPE_M, 0);
     set_flag(PIPE_MTE3, PIPE_V, 2);
+
+    set_flag(PIPE_V, PIPE_MTE2, 1);
+    set_flag(PIPE_MTE3, PIPE_V, 1);
+    set_flag(PIPE_MTE1, PIPE_MTE3, 2);
+    set_flag(PIPE_MTE1, PIPE_MTE3, 3);
+    set_flag(PIPE_M, PIPE_MTE1, 2);
+    set_flag(PIPE_M, PIPE_MTE1, 3);
+    set_flag(PIPE_MTE3, PIPE_MTE2, 0);
+    set_flag(PIPE_MTE3, PIPE_MTE2, 2);
+    set_flag(PIPE_MTE3, PIPE_MTE2, 3);
+    set_flag(PIPE_V, PIPE_M, 1);
+    set_flag(PIPE_V, PIPE_M, 2);
+    set_flag(PIPE_V, PIPE_M, 3);
+
+    int64_t pingpong_flag = 0;
 
     for (int i = 0; i < tiles_per_core; i++) {
         int64_t block_index = i * block_num + block_idx;
@@ -308,133 +349,153 @@ pipe_barrier(PIPE_ALL);
 
             __gm__ half *X_ptr = vectorX + m * incx * k_idx;
 
+            __ub__ half *ubA1_pg_ptr = ubA1 + UB_MATRIX_SIZE * pingpong_flag;
+            __ub__ half *ubA2_pg_ptr = ubA2 + UB_MATRIX_SIZE * pingpong_flag;
+
+            __ub__ half *ubX1_pg_ptr = ubX1 + UB_VECTOR_SIZE * pingpong_flag;
+
+            __l1__ half *l1A_pg_ptr = L1A.get_ptr(0) + UB_MATRIX_SIZE * pingpong_flag;
+            __l1__ half *l1B_pg_ptr = L1B.get_ptr(0) + UB_MATRIX_SIZE * pingpong_flag;
+
+            __l0a__ half *inputA_pg_ptr = inputA.get_ptr(0) + UB_MATRIX_SIZE * pingpong_flag;
+            __l0b__ half *inputB_pg_ptr = inputB.get_ptr(0) + UB_MATRIX_SIZE * pingpong_flag;
+
             if (transA == 1) {
                 __gm__ half *A_ptr = matrixA + m * lda * row + k_idx * m;
 
-                wait_flag(PIPE_V, PIPE_MTE2, 0); // 等待ubA1缓冲区读完
-                hablas_load_matrix_gm2ub(ubA1, A_ptr, k_real, k_real_pad, m_real, m_real_pad, lda);
+                wait_flag(PIPE_V, PIPE_MTE2, pingpong_flag); // 等待ubA1缓冲区读完
+                hablas_load_matrix_gm2ub(ubA1_pg_ptr, A_ptr, k_real, k_real_pad, m_real, m_real_pad, lda);
 
-                set_flag(PIPE_MTE2, PIPE_V, 0);
-                wait_flag(PIPE_MTE2, PIPE_V, 0);
+                set_flag(PIPE_MTE2, PIPE_V, pingpong_flag);
+                wait_flag(PIPE_MTE2, PIPE_V, pingpong_flag);
                 if (k_idx == row) {
-                    set_flag(PIPE_MTE2, PIPE_S, 0);
-                    wait_flag(PIPE_MTE2, PIPE_S, 0); 
-                    hablas_fill_zero(ubA1, uplo, diag, m_real, m_real_pad, ub_uplo_matrix);
+                    set_flag(PIPE_MTE2, PIPE_S, pingpong_flag);
+                    wait_flag(PIPE_MTE2, PIPE_S, pingpong_flag); 
+                    hablas_fill_zero(ubA1_pg_ptr, uplo, diag, m_real, m_real_pad, ub_uplo_matrix);
                 }
 
-                wait_flag(PIPE_MTE3, PIPE_V, 0); //等待ubA2缓冲区读完
-                hablas_load_matrix_ND2nZ(ubA2, ubA1, k_real_pad, m_real_pad);
-                set_flag(PIPE_V, PIPE_MTE2, 0); // ubA1缓冲区读完
+                wait_flag(PIPE_MTE3, PIPE_V, pingpong_flag); //等待ubA2缓冲区读完
+                hablas_load_matrix_ND2nZ(ubA2_pg_ptr, ubA1_pg_ptr, k_real_pad, m_real_pad);
+                set_flag(PIPE_V, PIPE_MTE2, pingpong_flag); // ubA1缓冲区读完
 
-                set_flag(PIPE_V, PIPE_MTE3, 0);
-                wait_flag(PIPE_V, PIPE_MTE3, 0);
+                set_flag(PIPE_V, PIPE_MTE3, pingpong_flag);
+                wait_flag(PIPE_V, PIPE_MTE3, pingpong_flag);
 
-                wait_flag(PIPE_MTE1, PIPE_MTE3, 0); // 等待L1A读完
-                hablas_load_matrix_ub2l1(L1A.get_ptr(0), ubA2, m_real_pad, k_real_pad);
-                set_flag(PIPE_MTE3, PIPE_V, 0); // ubA2缓冲区读完
+                wait_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag); // 等待L1A读完
+                hablas_load_matrix_ub2l1(l1A_pg_ptr, ubA2_pg_ptr, m_real_pad, k_real_pad);             
+                set_flag(PIPE_MTE3, PIPE_V, pingpong_flag); // ubA2缓冲区读完
 
-                set_flag(PIPE_MTE3, PIPE_MTE1, 0);
-                wait_flag(PIPE_MTE3, PIPE_MTE1, 0);
-                wait_flag(PIPE_M, PIPE_MTE1, 0); // 等待inputB读完
-                load2d(inputB.get_ptr(0),
-                    L1A.get_ptr(0),
+                set_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag);
+                wait_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag);
+                wait_flag(PIPE_M, PIPE_MTE1, pingpong_flag); // 等待inputB读完
+                load2d(inputB_pg_ptr,
+                    l1A_pg_ptr,
                     0,                                     // index
                     (m_real_pad / 16) * (k_real_pad / 16), // repeat
                     1,                                     // src_stride
                     0);                                    // transpose
-                set_flag(PIPE_MTE1, PIPE_MTE3, 0); // L1A读完
-                set_flag(PIPE_MTE1, PIPE_M, 0);
+                set_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag); // L1A读完
+                set_flag(PIPE_MTE1, PIPE_M, pingpong_flag);
             } else {
                 __gm__ half *A_ptr = matrixA + m * row + k_idx * m * lda;
-                wait_flag(PIPE_V, PIPE_MTE2, 0); // 等待ubA1缓冲区读完
-
-                hablas_load_matrix_gm2ub(ubA1, A_ptr, m_real, m_real_pad, k_real, k_real_pad, lda);
-                set_flag(PIPE_MTE2, PIPE_V, 0);
-                wait_flag(PIPE_MTE2, PIPE_V, 0);
+                wait_flag(PIPE_V, PIPE_MTE2, pingpong_flag); // 等待ubA1缓冲区读完
+                hablas_load_matrix_gm2ub(ubA1_pg_ptr, A_ptr, m_real, m_real_pad, k_real, k_real_pad, lda);
+                set_flag(PIPE_MTE2, PIPE_V, pingpong_flag);
+                wait_flag(PIPE_MTE2, PIPE_V, pingpong_flag);
                 if (k_idx == row) {
                     set_flag(PIPE_MTE2, PIPE_S, 0);
                     wait_flag(PIPE_MTE2, PIPE_S, 0); 
-                    hablas_fill_zero(ubA1, uplo, diag, m_real, m_real_pad, ub_uplo_matrix);
+                    hablas_fill_zero(ubA1_pg_ptr, uplo, diag, m_real, m_real_pad, ub_uplo_matrix);
                 }
 
-                wait_flag(PIPE_MTE3, PIPE_V, 0); //等待ubA2缓冲区读完
-                hablas_load_matrix_ND2nZ(ubA2, ubA1, m_real_pad, k_real_pad);
-                set_flag(PIPE_V, PIPE_MTE2, 0); // ubA1缓冲区读完
+                wait_flag(PIPE_MTE3, PIPE_V, pingpong_flag); //等待ubA2缓冲区读完
+                hablas_load_matrix_ND2nZ(ubA2_pg_ptr, ubA1_pg_ptr, m_real_pad, k_real_pad);
+                set_flag(PIPE_V, PIPE_MTE2, pingpong_flag); // ubA1缓冲区读完
 
-                set_flag(PIPE_V, PIPE_MTE3, 0);
-                wait_flag(PIPE_V, PIPE_MTE3, 0);
+                set_flag(PIPE_V, PIPE_MTE3, pingpong_flag);
+                wait_flag(PIPE_V, PIPE_MTE3, pingpong_flag);
 
-                wait_flag(PIPE_MTE1, PIPE_MTE3, 0); // 等待L1A读完
-                hablas_load_matrix_ub2l1(L1A.get_ptr(0), ubA2, k_real_pad, m_real_pad);
+                wait_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag); // 等待L1A读完
+                hablas_load_matrix_ub2l1(l1A_pg_ptr, ubA2_pg_ptr, k_real_pad, m_real_pad);
 
-                set_flag(PIPE_MTE3, PIPE_V, 0); // ubA2缓冲区读完
+                set_flag(PIPE_MTE3, PIPE_V, pingpong_flag); // ubA2缓冲区读完
 
-                set_flag(PIPE_MTE3, PIPE_MTE1, 0);
-                wait_flag(PIPE_MTE3, PIPE_MTE1, 0);
+                set_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag);
+                wait_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag);
 
-                wait_flag(PIPE_M, PIPE_MTE1, 0); // 等待inputB读完
+                wait_flag(PIPE_M, PIPE_MTE1, pingpong_flag); // 等待inputB读完
                
                 for (int i = 0; i < k_real_pad / 16; ++i) {
-                    load2d(inputB.get_ptr(0) + i * m_real_pad * 16, 
-                           L1A.get_ptr(0), 
+                    load2d(inputB_pg_ptr + i * m_real_pad * 16, 
+                           l1A_pg_ptr, 
                            i,                   // index 
                            m_real_pad / 16,     // repeat 
                            k_real_pad / 16,     // src_stride 
                            1);                  // transpose
                 }
-                set_flag(PIPE_MTE1, PIPE_MTE3, 0); // L1A读完
-                set_flag(PIPE_MTE1, PIPE_M, 0);
+                set_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag); // L1A读完
+                set_flag(PIPE_MTE1, PIPE_M, pingpong_flag);
             }
 
-            wait_flag(PIPE_MTE3, PIPE_MTE2, 1);//等待ubX1读完
-            hablas_load_vector_gm2ub(ubX1, X_ptr, ubW1, k_real, incx);
+            wait_flag(PIPE_MTE3, PIPE_MTE2, pingpong_flag + 2);//等待ubX1读完
+            hablas_load_vector_gm2ub(ubX1_pg_ptr, X_ptr, ubW1, k_real, incx);
 
-            set_flag(PIPE_MTE2, PIPE_MTE3, 1);
-            wait_flag(PIPE_MTE2, PIPE_MTE3, 1);
-            wait_flag(PIPE_MTE1, PIPE_MTE3, 1); // 等待L1B读完
-            hablas_load_matrix_ub2l1(L1B.get_ptr(0), ubX1, 1, k_real_pad);
+            set_flag(PIPE_MTE2, PIPE_MTE3, pingpong_flag + 2);
+            wait_flag(PIPE_MTE2, PIPE_MTE3, pingpong_flag + 2);
 
-            set_flag(PIPE_MTE3, PIPE_MTE2, 1);// ubX1读完
-            set_flag(PIPE_MTE3, PIPE_MTE1, 1);
-            wait_flag(PIPE_MTE3, PIPE_MTE1, 1);
+            wait_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag + 2); // 等待L1B读完
+            hablas_load_matrix_ub2l1(l1B_pg_ptr, ubX1_pg_ptr, 1, k_real_pad);
 
-            wait_flag(PIPE_M, PIPE_MTE1, 1);// 等待inputA读完
-            load2d(inputA.get_ptr(0),
-                    L1B.get_ptr(0),
+      
+            set_flag(PIPE_MTE3, PIPE_MTE2, pingpong_flag + 2);// ubX1读完
+            set_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag + 2);
+            wait_flag(PIPE_MTE3, PIPE_MTE1, pingpong_flag + 2);
+
+
+      
+            wait_flag(PIPE_M, PIPE_MTE1, pingpong_flag + 2);// 等待inputA读完
+            load2d(inputA_pg_ptr,
+                    l1B_pg_ptr,
                     0,                                     // index
                     ((k_real_pad + 255) / 256),            // repeat
                     1,                                     // src_stride
                     0);                                    // transpose 
-            set_flag(PIPE_MTE1, PIPE_MTE3, 1); // L1B读完
-            set_flag(PIPE_MTE1, PIPE_M, 1);
+            set_flag(PIPE_MTE1, PIPE_MTE3, pingpong_flag + 2); // L1B读完
+            set_flag(PIPE_MTE1, PIPE_M, pingpong_flag + 2);
 
      
             int64_t init = (k_idx == 0) || (k_idx == row && (transA - uplo)) ? 1 : 0; 
 
-            wait_flag(PIPE_MTE1, PIPE_M, 0);
-            wait_flag(PIPE_MTE1, PIPE_M, 1);
+            wait_flag(PIPE_MTE1, PIPE_M, pingpong_flag);
+            wait_flag(PIPE_MTE1, PIPE_M, pingpong_flag + 2);
             if (k_idx == 0 || (((transA - uplo) != 0) && k_idx == row)) {
                 wait_flag(PIPE_V, PIPE_M, 0);// 等待result读完 
             }
-            mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), 1, k_real, m_real, init);
-            set_flag(PIPE_M, PIPE_MTE1, 1); // inputA读完
-            set_flag(PIPE_M, PIPE_MTE1, 0); // inputB读完
+            
+            // pipe_barrier(PIPE_ALL);
+            mmad(result.get_ptr(0), inputA_pg_ptr, inputB_pg_ptr, 1, k_real, m_real, init);
+            set_flag(PIPE_M, PIPE_MTE1, pingpong_flag + 2); // inputA读完
+            set_flag(PIPE_M, PIPE_MTE1, pingpong_flag); // inputB读完
             if (k_idx == k_dst - 1) {
                 set_flag(PIPE_M, PIPE_V, 0);
-            } 
+            }
+            pingpong_flag = 1 - pingpong_flag;
         }
         wait_flag(PIPE_MTE3, PIPE_V, 2);// 等待ubR1读完 
         wait_flag(PIPE_M, PIPE_V, 0);
         hablas_store_vector_l0c2ub(ubR1, result.get_ptr(0), m_real);
         set_flag(PIPE_V, PIPE_M, 0);// result读完
+        
  
+// pipe_barrier(PIPE_ALL);
         set_flag(PIPE_V, PIPE_MTE3, 2);
         wait_flag(PIPE_V, PIPE_MTE3, 2);
+
         set_flag(PIPE_V, PIPE_S, 2);
         wait_flag(PIPE_V, PIPE_S, 2);
 
         hablas_memcpy(W_ptr, ubR1, m_real, M);
-        set_flag(PIPE_MTE3, PIPE_V, 2);// ubR1读完 
+        set_flag(PIPE_MTE3, PIPE_V, 2);// ubR1读完
     }
 
     wait_flag(PIPE_V, PIPE_MTE2, 0);
@@ -446,4 +507,17 @@ pipe_barrier(PIPE_ALL);
     wait_flag(PIPE_M, PIPE_MTE1, 1);
     wait_flag(PIPE_V, PIPE_M, 0);
     wait_flag(PIPE_MTE3, PIPE_V, 2);
+
+    wait_flag(PIPE_V, PIPE_MTE2, 1);
+    wait_flag(PIPE_MTE3, PIPE_V, 1);
+    wait_flag(PIPE_MTE1, PIPE_MTE3, 2);
+    wait_flag(PIPE_MTE1, PIPE_MTE3, 3);
+    wait_flag(PIPE_M, PIPE_MTE1, 2);
+    wait_flag(PIPE_M, PIPE_MTE1, 3);
+    wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
+    wait_flag(PIPE_MTE3, PIPE_MTE2, 2);
+    wait_flag(PIPE_MTE3, PIPE_MTE2, 3);
+    wait_flag(PIPE_V, PIPE_M, 1);
+    wait_flag(PIPE_V, PIPE_M, 2);
+    wait_flag(PIPE_V, PIPE_M, 3);
 }
