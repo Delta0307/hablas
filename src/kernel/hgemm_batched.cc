@@ -1,5 +1,5 @@
 #include "tools.h"
-#define UB_HALF_60KB 60 * 1024 / 2
+#define UB_HALF_56KB 56 * 1024 / 2
 
 #ifndef CAMODEL_PROFILING
 extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(hablasOperation_t transA,
@@ -38,20 +38,20 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
     half beta = 1.0;
     int64_t batch_count = 2;
 #endif
-    Vector<half_16, 240 * 1024 / 2 / 16, HACL_UB> ub;
+    Vector<half_16, 224 * 1024 / 2 / 16, HACL_UB> ub;
 
     __ub__ half *ubA1 = ub.get_ptr(0);
-    __ub__ half *ubA2 = ubA1 + UB_HALF_60KB;
-    __ub__ half *ubB1 = ubA2 + UB_HALF_60KB;
-    __ub__ half *ubB2 = ubB1 + UB_HALF_60KB;
+    __ub__ half *ubA2 = ubA1 + UB_HALF_56KB;
+    __ub__ half *ubB1 = ubA2 + UB_HALF_56KB;
+    __ub__ half *ubB2 = ubB1 + UB_HALF_56KB;
 
     __ub__ half *ub_buffer0 = ub.get_ptr(0);
-    __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_60KB;
+    __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_56KB;
 
-    Vector<int64_4, 16 * 1024 / 8 / 4, HACL_UB> list;
+    Vector<int64_4, 32 * 1024 / 8 / 4, HACL_UB> list;
     __ub__ int64_t *listA = list.get_ptr(0);
-    __ub__ int64_t *listB = listA + 512;
-    __ub__ int64_t *listC = listA + 1024;
+    __ub__ int64_t *listB = listA + 1024;
+    __ub__ int64_t *listC = listA + 2048;
 
     int64_t len = ((batch_count * 8) & 0xFFFFFFE0) + 32;
 #ifndef CAMODEL_PROFILING
@@ -69,8 +69,8 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
     *(listC + 1) = (int64_t)matrixC2;
 #endif
 
-    int64_t m = 240;
-    int64_t n = 240;
+    int64_t m = 224;
+    int64_t n = 224;
     int64_t k = 128;
 
     int64_t m_remain = M % m;
@@ -101,6 +101,7 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
     Vector<half_16, L0C_MAX_HALF_SIZE / 16, HACL_L1> L1C;
 
     set_flag(PIPE_MTE3, PIPE_MTE2, 1);
+    set_flag(PIPE_MTE1, PIPE_MTE2, 0);
     for (int64_t i = 0; i < tiles_per_core; ++i)
     {
         int64_t global_id = i * block_num + block_idx;
@@ -133,15 +134,7 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
 
         set_flag(PIPE_S, PIPE_MTE2, 0);
         wait_flag(PIPE_S, PIPE_MTE2, 0);
-        hablas_load_matrix_gm2ub(ub_buffer0, C_ptr, m_real_pad, n_real_pad, m_real, n_real, ldc);
-        set_flag(PIPE_MTE2, PIPE_V, 2);
-        wait_flag(PIPE_MTE2, PIPE_V, 2);
-        hablas_load_matrixC_ND2zN(ub_buffer1, ub_buffer0, m_real_pad, n_real_pad);
-        vec_muls(ub_buffer1, ub_buffer1, beta, 2 * UB_HALF_60KB);
-        set_flag(PIPE_V, PIPE_MTE3, 2);
-        wait_flag(PIPE_V, PIPE_MTE3, 2);
-  
-        hablas_load_matrixC_ub2l0(result.get_ptr(0), ub_buffer1, m_real_pad, n_real_pad);
+
         set_flag(PIPE_M, PIPE_MTE1, 0);
         set_flag(PIPE_V, PIPE_MTE2, 0);
         set_flag(PIPE_MTE1, PIPE_MTE3, 0);
@@ -150,8 +143,8 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
         set_flag(PIPE_MTE1, PIPE_MTE3, 1);
         set_flag(PIPE_MTE3, PIPE_V, 1);
 
-        set_flag(PIPE_MTE3, PIPE_MTE2, 0);
-        wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
+        set_flag(PIPE_MTE3, PIPE_MTE1, 0);
+        wait_flag(PIPE_MTE3, PIPE_MTE1, 0);
         for (int64_t j = 0; j < k_loop; ++j)
         {
             int64_t k_real = k;
@@ -194,7 +187,7 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
             wait_flag(PIPE_S, PIPE_MTE2, 0);
 
             wait_flag(PIPE_M, PIPE_MTE1, 0);
-            // A
+            //         // A
             {
                 wait_flag(PIPE_MTE1, PIPE_MTE3, 0);
                 wait_flag(PIPE_MTE3, PIPE_V, 0);
@@ -224,8 +217,7 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
                 hablas_load_matrix_gm2ub(ubB1, B_ptr, B_m, B_n, B_m_real, B_n_real, ldb);
                 set_flag(PIPE_MTE2, PIPE_V, 1);
                 wait_flag(PIPE_MTE2, PIPE_V, 1);
-                hablas_load_input_matrix_ND2zZ(ubB2, ubB1, B_m, B_n, (half)1.0);
-                vec_muls(ubB2, ubB2, alpha, UB_HALF_60KB);
+                hablas_load_input_matrix_ND2zZ(ubB2, ubB1, B_m, B_n, alpha);
                 set_flag(PIPE_V, PIPE_MTE3, 1);
                 wait_flag(PIPE_V, PIPE_MTE3, 1);
                 hablas_load_input_matrix_ub2l1(L1B.get_ptr(0), ubB2, B_m, B_n);
@@ -239,9 +231,20 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
             }
             set_flag(PIPE_MTE1, PIPE_M, 0);
             wait_flag(PIPE_MTE1, PIPE_M, 0);
-            mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 0);
+            if (j == 0)
+            {
+                mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 1);
+            }
+            else
+            {
+                mmad(result.get_ptr(0), inputA.get_ptr(0), inputB.get_ptr(0), m_real_pad, k_real, n_real, 0);
+            }
+
             set_flag(PIPE_M, PIPE_MTE1, 0);
         }
+        wait_flag(PIPE_MTE1, PIPE_MTE2, 0);
+        hablas_load_matrix_gm2l1(L1C.get_ptr(0), C_ptr, m_real_pad, n_real_pad, m_real, n_real, ldc);
+        set_flag(PIPE_MTE2, PIPE_MTE1, 0);
 
         wait_flag(PIPE_M, PIPE_MTE1, 0);
         wait_flag(PIPE_V, PIPE_MTE2, 0);
@@ -255,6 +258,16 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
         wait_flag(PIPE_M, PIPE_V, 0);
 
         hablas_store_matrixC_l02ub2ub(ub_buffer1, ub_buffer0, result.get_ptr(0), m_real_pad, n_real_pad);
+        set_flag(PIPE_V, PIPE_MTE1, 0);
+        wait_flag(PIPE_V, PIPE_MTE1, 0);
+        wait_flag(PIPE_MTE2, PIPE_MTE1, 0);
+        hablas_load_matrix_l12ub(ub_buffer0, L1C.get_ptr(0), m_real_pad, n_real_pad);
+        set_flag(PIPE_MTE1, PIPE_MTE2, 0);
+
+        set_flag(PIPE_MTE1, PIPE_V, 0);
+        wait_flag(PIPE_MTE1, PIPE_V, 0);
+
+        vec_axpy(ub_buffer1, ub_buffer0, beta, m_real_pad * n_real);
 
         set_flag(PIPE_V, PIPE_MTE3, 3);
         wait_flag(PIPE_V, PIPE_MTE3, 3);
@@ -262,4 +275,5 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
         set_flag(PIPE_MTE3, PIPE_MTE2, 1);
     }
     wait_flag(PIPE_MTE3, PIPE_MTE2, 1);
+    wait_flag(PIPE_MTE1, PIPE_MTE2, 0);
 }
