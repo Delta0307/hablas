@@ -51,72 +51,36 @@ hablas_complex_to_real_imag(__ub__ float *dst,
 {
     int64_t loop = m_real * 2 / 64;
     int64_t remain = m_real * 2 % 64;
-    int64_t n_max = 255;
-    int64_t n_loop = n_real/255;
-    int64_t n_remain = n_real%255;
-    for (int i = 0; i < n_loop; ++i) {
-        for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
-            __hacl_details__::__hacl_intrinsic_move_mask(64);
-            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-                dst + loop_idx * 64 + i*255*m_real_pad*2,
-                src + loop_idx * 64 + i*255*m_real_pad*2,
-                vector + loop_idx * 64,
-                255,// repeat times
-                m_real_pad * 2 / 8, // dst repeat stride
-                m_real_pad * 2 / 8, // src0 repeat stride
-                0, // src1 repeat stride
-                1,// dst block stride
-                1,// src0 block stride
-                1// src1 block stride
-            );
-        }
-        if (remain) {
-            __hacl_details__::__hacl_intrinsic_move_mask(remain);
-            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-                dst + loop * 64 + i*255*m_real_pad*2,
-                src + loop * 64 + i*255*m_real_pad*2,
-                vector + loop * 64,
-                255,// repeat times
-                m_real_pad * 2 / 8, // dst repeat stride
-                m_real_pad * 2 / 8, // src0 repeat stride
-                0, // src1 repeat stride
-                1,// dst block stride
-                1,// src0 block stride
-                1// src1 block stride
-            );
-        }
+
+    for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
+        __hacl_details__::__hacl_intrinsic_move_mask(64);
+        __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+        dst + loop_idx * 64,
+        src + loop_idx * 64,
+            vector + loop_idx * 64,
+        n_real,// repeat times
+            m_real_pad * 2 / 8, // dst repeat stride
+            m_real_pad * 2 / 8, // src0 repeat stride
+            0, // src1 repeat stride
+            1,// dst block stride
+            1,// src0 block stride
+            1// src1 block stride
+        );
     }
-    if (n_remain != 0) {
-        for (int loop_idx = 0; loop_idx < loop; ++loop_idx) {
-            __hacl_details__::__hacl_intrinsic_move_mask(64);
-            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-                dst + loop_idx * 64 + n_loop*255*m_real_pad*2,
-                src + loop_idx * 64 + n_loop*255*m_real_pad*2,
-                vector + loop_idx * 64,
-                n_remain,// repeat times
-                m_real_pad * 2 / 8, // dst repeat stride
-                m_real_pad * 2 / 8, // src0 repeat stride
-                0, // src1 repeat stride
-                1,// dst block stride
-                1,// src0 block stride
-                1// src1 block stride
-            );
-        }
-        if (remain) {
-            __hacl_details__::__hacl_intrinsic_move_mask(remain);
-            __hacl_details__::__hacl_intrinsic_vec_mul<float>(
-                dst + loop * 64 + n_loop*255*m_real_pad*2,
-                src + loop * 64 + n_loop*255*m_real_pad*2,
-                vector + loop * 64,
-                n_remain,// repeat times
-                m_real_pad * 2 / 8, // dst repeat stride
-                m_real_pad * 2 / 8, // src0 repeat stride
-                0, // src1 repeat stride
-                1,// dst block stride
-                1,// src0 block stride
-                1// src1 block stride
-            );
-        }
+    if (remain) {
+        __hacl_details__::__hacl_intrinsic_move_mask(remain);
+        __hacl_details__::__hacl_intrinsic_vec_mul<float>(
+        dst + loop * 64,
+        src + loop * 64,
+            vector + loop * 64,
+        n_real,// repeat times
+            m_real_pad * 2 / 8, // dst repeat stride
+            m_real_pad * 2 / 8, // src0 repeat stride
+            0, // src1 repeat stride
+            1,// dst block stride
+            1,// src0 block stride
+            1// src1 block stride
+        );
     }
 }
 
@@ -237,7 +201,6 @@ HACL_INLINE __aicore__ void
 hablas_matrix_vector_muls_notrans(__ub__ float *dst,
                                   __ub__ float *src0,
                                   __ub__ float *src1,
-                                  __ub__ float *tmp,
                                   int64_t m_real,
                                   int64_t n_real,
                                   int64_t m_real_pad,
@@ -249,8 +212,6 @@ hablas_matrix_vector_muls_notrans(__ub__ float *dst,
         if (flag) t = -t; 
         set_flag(PIPE_S, PIPE_V, 3);
         wait_flag(PIPE_S, PIPE_V, 3);
-        // vec_muls(tmp, src0+m_real_pad*n_idx, t, m_real);
-        // vec_add(dst, dst, tmp, m_real);
         vec_axpy(dst, src0 + m_real_pad * n_idx, t, m_real);
     }
 }
@@ -337,36 +298,32 @@ hablas_complex_muls_notrans(__ub__ float *real_dst,
                             __ub__ float *imag_src0,
                             __ub__ float *real_src1,
                             __ub__ float *imag_src1,
-                            __ub__ float *tmp,
                             int64_t m_real,
                             int64_t n_real,
                             int64_t m_real_pad,
                             int64_t n_real_pad) 
 {
-    hablas_matrix_vector_muls_notrans(real_dst, real_src0, real_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(real_dst, imag_src0, imag_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 1);
-    hablas_matrix_vector_muls_notrans(imag_dst, real_src0, imag_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(imag_dst, imag_src0, real_src1, tmp, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(real_dst, real_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(real_dst, imag_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 1);
+    hablas_matrix_vector_muls_notrans(imag_dst, real_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    hablas_matrix_vector_muls_notrans(imag_dst, imag_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
 }
 
-HACL_INLINE __aicore__ void
-hablas_complex_muls_alpha(__ub__ float *real_dst,
-                            __ub__ float *imag_dst,
-                            __ub__ float *real_src,
-                            __ub__ float *imag_src,
-                            T alpha,
-                            int64_t vaild_len) 
+HACL_INLINE __aicore__ void 
+hablas_complex_vector_scalar_mul(__ub__ float *real_tmp,
+                                 __ub__ float *imag_tmp,
+                                 __ub__ float *real_src,
+                                 __ub__ float *imag_src,
+                                 float alpha_real,
+                                 float alpha_imag,
+                                 int64_t m_real)
 {
-    pipe_barrier(PIPE_ALL);
-    _memcpy(real_src, real_dst, vaild_len);
-    _memcpy(imag_src, imag_dst, vaild_len);
-    vec_muls(real_dst, real_src, alpha.a, vaild_len);
-    vec_muls(imag_dst, imag_src, alpha.b, vaild_len);
-    vec_muls(real_src, real_src, alpha.b, vaild_len);
-    vec_muls(imag_src, imag_src, alpha.a, vaild_len);
-    vec_sub(real_dst, real_dst, imag_dst, vaild_len);
-    vec_add(imag_dst, real_src, imag_src, vaild_len);
-    pipe_barrier(PIPE_ALL);
+    vec_muls(real_tmp, real_src, alpha_real, m_real);
+    vec_muls(imag_tmp, imag_src, alpha_imag, m_real);
+    vec_muls(real_src, real_src, alpha_imag, m_real);
+    vec_muls(imag_src, imag_src, alpha_real, m_real);
+    vec_add(imag_src, real_src, imag_src, m_real);
+    vec_sub(real_src, real_tmp, imag_tmp, m_real);
 }
 
 extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
@@ -387,6 +344,9 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
     Vector<float_8, UB_MATRIX_SIZE / 8 * 2, HACL_UB> ub_a_block_imag;
     Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_x_block_real;
     Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_x_block_imag;
+    
+    Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_res_block_real;
+    Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_res_block_imag;
     Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_y_block_real;
     Vector<float_8, M_SIZE / 8 * 2, HACL_UB> ub_y_block_imag;
     Vector<float_8, K_SIZE / 8 * 2, HACL_UB> ub_buf_block_real;
@@ -398,6 +358,8 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
     __ub__ float *ub_a_block_imag_ptr = ub_a_block_imag.get_ptr(0);
     __ub__ float *ub_x_block_real_ptr = ub_x_block_real.get_ptr(0);
     __ub__ float *ub_x_block_imag_ptr = ub_x_block_imag.get_ptr(0);
+    __ub__ float *ub_res_block_real_ptr = ub_res_block_real.get_ptr(0);
+    __ub__ float *ub_res_block_imag_ptr = ub_res_block_imag.get_ptr(0);
     __ub__ float *ub_y_block_real_ptr = ub_y_block_real.get_ptr(0);
     __ub__ float *ub_y_block_imag_ptr = ub_y_block_imag.get_ptr(0);
     __ub__ float *ub_separate_vector_ptr = ub_separate_vector.get_ptr(0);
@@ -419,7 +381,6 @@ pipe_barrier(PIPE_ALL);
     while ((m > 16) && ((trans == 0 && (M + (m-16) - 1) / (m-16) <= 30 )|| (trans != 0 && (N + (m-16) - 1) / (m-16) <= 30))) {
         m -= 16;
     }
-
     int64_t m_tiles  = (M + m - 1) / m;
     int64_t k_loop   = (N + k - 1) / k;
     int64_t m_remain = M % m;
@@ -458,8 +419,8 @@ pipe_barrier(PIPE_ALL);
     set_flag(PIPE_V, PIPE_MTE2, 1);
     set_flag(PIPE_V, PIPE_MTE2, 2);
     set_flag(PIPE_V, PIPE_MTE2, 3);
-    set_flag(PIPE_MTE2, PIPE_MTE3, 0);
     set_flag(PIPE_MTE3, PIPE_V, 0); 
+
     for (int64_t tiles_idx = 0; tiles_idx < tiles_per_core; ++tiles_idx) {
         int64_t block_index = tiles_idx * block_num + block_idx;
         int64_t row = block_index;
@@ -471,27 +432,7 @@ pipe_barrier(PIPE_ALL);
 
         __gm__ float *Y_ptr = Y + row * m * incy * 2;
         __gm__ float *tmp_gm_ptr = tmp_gm + row * m * 2+1;
-        set_flag(PIPE_MTE3, PIPE_S, 0);
-        wait_flag(PIPE_MTE3, PIPE_S, 0);
-        wait_flag(PIPE_MTE3, PIPE_V, 0); 
-        wait_flag(PIPE_V, PIPE_MTE2, 2);// waiting for ub_y_block_real_ptr
-        hablas_load_cvector_gm2ub(ub_y_block_real_ptr, Y_ptr, ub_wksp_block_ptr, m_real, incy);
-        set_flag(PIPE_MTE2, PIPE_V, 2);
-        set_flag(PIPE_V, PIPE_MTE2, 2);
-
-        wait_flag(PIPE_MTE2, PIPE_V, 2);
-        hablas_complex_to_real_imag(ub_y_block_real_ptr, ub_y_block_real_ptr, ub_separate_vector_ptr, m_real_pad, 1, m_real, 1);
-
-        wait_flag(PIPE_V, PIPE_MTE2, 3); // waiting for ub_x_block_imag_ptr
-        hablas_load_cvector_gm2ub(ub_y_block_imag_ptr, Y_ptr + 1, ub_wksp_block_ptr, m_real, incy);
-        set_flag(PIPE_MTE2, PIPE_V, 3);
-        set_flag(PIPE_V, PIPE_MTE2, 3);
-
-        wait_flag(PIPE_MTE2, PIPE_V, 3);
-        hablas_complex_to_real_imag(ub_y_block_imag_ptr, ub_y_block_imag_ptr, ub_separate_vector_ptr, m_real_pad, 1, m_real, 1);
-        hablas_complex_muls_alpha(ub_y_block_real_ptr, ub_y_block_imag_ptr, ub_tmp_block_real_ptr, ub_tmp_block_imag_ptr, beta, m_real*2);
-        // uplo = 1上三角矩阵 
-        // 矩阵A在右边 向量X在左边 启用GEMV模式
+        
                  
         for (int64_t k_idx = 0; k_idx < k_loop; ++k_idx) {
             int64_t k_real = k;
@@ -500,93 +441,72 @@ pipe_barrier(PIPE_ALL);
             }
             int64_t k_real_pad = k_real % 8 ? (k_real & 0xfffffff8) + 8 : k_real;
             __gm__ float *X_ptr = X + k * incx * k_idx * 2;
-
-            if (trans == 0) {
-                __gm__ float *A_ptr = A + m * row * 2 + k_idx * k * lda * 2;
-
-                wait_flag(PIPE_V, PIPE_MTE2, 0);// waiting for ub_a_block_real_ptr
-                hablas_load_cmatrix_gm2ub(ub_a_block_real_ptr, A_ptr, m_real, k_real, m_real_pad, k_real_pad, lda);
-                set_flag(PIPE_MTE2, PIPE_V, 0);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 0);
-                hablas_complex_to_real_imag(ub_a_block_real_ptr, ub_a_block_real_ptr, ub_separate_vector_ptr, m_real_pad, k_real_pad, m_real, k_real);
-                
-                wait_flag(PIPE_V, PIPE_MTE2, 1);// waiting for ub_a_block_imag_ptr
-                hablas_load_cmatrix_gm2ub(ub_a_block_imag_ptr, A_ptr + 1, m_real, k_real, m_real_pad, k_real_pad, lda);
-                set_flag(PIPE_MTE2, PIPE_V, 1);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 1);
-                hablas_complex_to_real_imag(ub_a_block_imag_ptr, ub_a_block_imag_ptr, ub_separate_vector_ptr, m_real_pad, k_real_pad, m_real, k_real);
-
-
-                wait_flag(PIPE_V, PIPE_MTE2, 2);// waiting for ub_x_block_real_ptr
-                hablas_load_cvector_gm2ub(ub_x_block_real_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 2);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 2);
-                hablas_complex_to_real_imag(ub_x_block_real_ptr, ub_x_block_real_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
-
-                wait_flag(PIPE_V, PIPE_MTE2, 3); // waiting for ub_x_block_imag_ptr
-                hablas_load_cvector_gm2ub(ub_x_block_imag_ptr, X_ptr + 1, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 3);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 3);
-                hablas_complex_to_real_imag(ub_x_block_imag_ptr, ub_x_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
-                hablas_complex_muls_alpha(ub_x_block_real_ptr, ub_x_block_imag_ptr, ub_tmp_block_real_ptr, ub_tmp_block_imag_ptr, alpha, k_real*2);
-
-                set_flag(PIPE_V, PIPE_S, 0);
-                wait_flag(PIPE_V, PIPE_S, 0);
-
-                hablas_complex_muls_notrans(ub_y_block_real_ptr,
-                                            ub_y_block_imag_ptr,
-                                            ub_a_block_real_ptr,
-                                            ub_a_block_imag_ptr,
-                                            ub_x_block_real_ptr,
-                                            ub_x_block_imag_ptr,
-                                            ub_tmp_block_ptr,
-                                            m_real * 2, k_real,
-                                            m_real_pad * 2, k_real_pad);
-                set_flag(PIPE_V, PIPE_MTE2, 0); // ub_a_block_real_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 1); // ub_a_block_imag_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 2); // ub_x_block_real_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 3); // ub_x_block_imag_ptr done
-            } else {
-                __gm__ float *A_ptr = A + m * row * lda * 2 + k_idx * k * 2;
             
+            // 0 notransmul 1 transmul 
+            int64_t flag = 0;
+            if (trans != 0) flag = 1;
+
+            __gm__ float *A_ptr = A + m * row * 2 + k_idx * k * lda * 2;
+            if (flag) {
+                A_ptr = A + m * row * lda * 2 + k_idx * k * 2; 
+            } 
+            if (flag) {
                 wait_flag(PIPE_V, PIPE_MTE2, 0);// waiting for ub_a_block_real_ptr
                 hablas_load_cmatrix_gm2ub(ub_a_block_real_ptr, A_ptr, k_real, m_real, k_real_pad, m_real_pad, lda);
                 set_flag(PIPE_MTE2, PIPE_V, 0);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 0);
+                wait_flag(PIPE_MTE2, PIPE_V, 0);                
                 hablas_complex_to_real_imag(ub_a_block_real_ptr, ub_a_block_real_ptr, ub_separate_vector_ptr, k_real_pad, m_real_pad, k_real, m_real);
 
                 wait_flag(PIPE_V, PIPE_MTE2, 1);// waiting for ub_a_block_imag_ptr
                 hablas_load_cmatrix_gm2ub(ub_a_block_imag_ptr, A_ptr + 1, k_real, m_real, k_real_pad, m_real_pad, lda);
                 set_flag(PIPE_MTE2, PIPE_V, 1);
-
-                wait_flag(PIPE_MTE2, PIPE_V, 1);
+                wait_flag(PIPE_MTE2, PIPE_V, 1);                
                 hablas_complex_to_real_imag(ub_a_block_imag_ptr, ub_a_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, m_real_pad, k_real, m_real);
-                if (trans == 2) {
-                    vec_muls(ub_a_block_imag, ub_a_block_imag, -1.0f);
-                }
+            } else {
+                wait_flag(PIPE_V, PIPE_MTE2, 0);// waiting for ub_a_block_real_ptr
+                hablas_load_cmatrix_gm2ub(ub_a_block_real_ptr, A_ptr, m_real, k_real, m_real_pad, k_real_pad, lda);
+                set_flag(PIPE_MTE2, PIPE_V, 0);
+                wait_flag(PIPE_MTE2, PIPE_V, 0);                
+                hablas_complex_to_real_imag(ub_a_block_real_ptr, ub_a_block_real_ptr, ub_separate_vector_ptr, m_real_pad, k_real_pad, m_real, k_real);
 
-                wait_flag(PIPE_V, PIPE_MTE2, 2);// waiting for ub_x_block_real_ptr
-                hablas_load_cvector_gm2ub(ub_x_block_real_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 2);
+                wait_flag(PIPE_V, PIPE_MTE2, 1);// waiting for ub_a_block_imag_ptr
+                hablas_load_cmatrix_gm2ub(ub_a_block_imag_ptr, A_ptr + 1, m_real, k_real, m_real_pad, k_real_pad, lda);
+                set_flag(PIPE_MTE2, PIPE_V, 1);
+                wait_flag(PIPE_MTE2, PIPE_V, 1);                
+                hablas_complex_to_real_imag(ub_a_block_imag_ptr, ub_a_block_imag_ptr, ub_separate_vector_ptr, m_real_pad, k_real_pad, m_real, k_real);
+            }
+            if (trans == 2) {
+                vec_muls(ub_a_block_imag, ub_a_block_imag, -1.0f);
+            }
 
-                wait_flag(PIPE_MTE2, PIPE_V, 2);
+            if (k_idx == row) {
+                set_flag(PIPE_V, PIPE_S, 0);
+                wait_flag(PIPE_V, PIPE_S, 0);
+                set_flag(PIPE_S, PIPE_V, 0);
+                wait_flag(PIPE_S, PIPE_V, 0);
+            }
+      
+            wait_flag(PIPE_V, PIPE_MTE2, 2);// waiting for ub_x_block_real_ptr
+            hablas_load_cvector_gm2ub(ub_x_block_real_ptr, X_ptr, ub_wksp_block_ptr, k_real, incx);
+            set_flag(PIPE_MTE2, PIPE_V, 2);
+            wait_flag(PIPE_MTE2, PIPE_V, 2);
+            hablas_complex_to_real_imag(ub_x_block_real_ptr, ub_x_block_real_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
 
-                hablas_complex_to_real_imag(ub_x_block_real_ptr, ub_x_block_real_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
+            wait_flag(PIPE_V, PIPE_MTE2, 3); // waiting for ub_x_block_imag_ptr
+            hablas_load_cvector_gm2ub(ub_x_block_imag_ptr, X_ptr + 1, ub_wksp_block_ptr, k_real, incx);
+            set_flag(PIPE_MTE2, PIPE_V, 3);
+            wait_flag(PIPE_MTE2, PIPE_V, 3);
+            hablas_complex_to_real_imag(ub_x_block_imag_ptr, ub_x_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
 
-                wait_flag(PIPE_V, PIPE_MTE2, 3); // waiting for ub_x_block_imag_ptr
-                hablas_load_cvector_gm2ub(ub_x_block_imag_ptr, X_ptr + 1, ub_wksp_block_ptr, k_real, incx);
-                set_flag(PIPE_MTE2, PIPE_V, 3);
+            if (k_idx == 0) {
+                wait_flag(PIPE_MTE3, PIPE_V, 0); // waiting for ub_res_block_real_ptr
+                vec_dup(ub_res_block_real_ptr, (float)0, M_SIZE * 2);
+                vec_dup(ub_res_block_imag_ptr, (float)0, M_SIZE * 2);
+            }
 
-                wait_flag(PIPE_MTE2, PIPE_V, 3);
-                hablas_complex_to_real_imag(ub_x_block_imag_ptr, ub_x_block_imag_ptr, ub_separate_vector_ptr, k_real_pad, 1, k_real, 1);
-                hablas_complex_muls_alpha(ub_x_block_real_ptr, ub_x_block_imag_ptr, ub_tmp_block_real_ptr, ub_tmp_block_imag_ptr, alpha, k_real*2);
-                hablas_complex_muls_trans(ub_y_block_real_ptr,
-                                          ub_y_block_imag_ptr,
+            if (flag) {
+                hablas_complex_muls_trans(ub_res_block_real_ptr,
+                                          ub_res_block_imag_ptr,
                                           ub_a_block_real_ptr,
                                           ub_a_block_imag_ptr,
                                           ub_x_block_real_ptr,
@@ -594,44 +514,87 @@ pipe_barrier(PIPE_ALL);
                                           ub_tmp_block_ptr,
                                           m_real, k_real,
                                           m_real_pad, k_real_pad);
-                
-                set_flag(PIPE_V, PIPE_MTE2, 0); // ub_a_block_real_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 1); // ub_a_block_imag_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 2); // ub_x_block_real_ptr done
-                set_flag(PIPE_V, PIPE_MTE2, 3); // ub_x_block_imag_ptr done
+            } else {
+                set_flag(PIPE_V, PIPE_S, 1);
+                wait_flag(PIPE_V, PIPE_S, 1);
+                hablas_complex_muls_notrans(ub_res_block_real_ptr,
+                                            ub_res_block_imag_ptr,
+                                            ub_a_block_real_ptr,
+                                            ub_a_block_imag_ptr,
+                                            ub_x_block_real_ptr,
+                                            ub_x_block_imag_ptr,
+                                            m_real * 2, k_real,
+                                            m_real_pad * 2, k_real_pad);
             }
-            if (k_idx == k_loop - 1) {
-                set_flag(PIPE_V, PIPE_MTE3, 0);
+            set_flag(PIPE_V, PIPE_MTE2, 0); // ub_a_block_real_ptr done
+            set_flag(PIPE_V, PIPE_MTE2, 1); // ub_a_block_imag_ptr done
+            set_flag(PIPE_V, PIPE_MTE2, 2); // ub_x_block_real_ptr done
+            set_flag(PIPE_V, PIPE_MTE2, 3); // ub_x_block_imag_ptr done
             }
-        }
-        wait_flag(PIPE_V, PIPE_MTE3, 0);
-
-
-
-        wait_flag(PIPE_MTE2, PIPE_MTE3, 0);// waiting for tmp_gm_ptr
-        set_flag(PIPE_V, PIPE_S, 0);
-        wait_flag(PIPE_V, PIPE_S, 0);
-        hablas_memcpy(tmp_gm_ptr, ub_y_block_imag_ptr, m_real * 2, m_real*2);
-        set_flag(PIPE_MTE3, PIPE_MTE2, 0);
-        wait_flag(PIPE_MTE3, PIPE_MTE2, 0);
-
-        _memcpy(ub_y_block_imag_ptr, tmp_gm_ptr - 1, m_real * 2);
-        set_flag(PIPE_MTE2, PIPE_MTE3, 0); // tmp_gm_ptr done
-
-        set_flag(PIPE_MTE2, PIPE_S, 0);
-        wait_flag(PIPE_MTE2, PIPE_S, 0);
-        
-        *(ub_y_block_imag_ptr) = 0.0;
-        set_flag(PIPE_S, PIPE_V, 0);
-        wait_flag(PIPE_S, PIPE_V, 0);
-
-        vec_add(ub_y_block_real_ptr, ub_y_block_imag_ptr, ub_y_block_real_ptr, m_real * 2);
+        set_flag(PIPE_V, PIPE_S, 3);
+        wait_flag(PIPE_V, PIPE_S, 3);
+        hablas_complex_vector_scalar_mul(ub_tmp_block_ptr,
+                                    ub_tmp_block_ptr + 128 * 2,
+                                    ub_res_block_real_ptr,
+                                    ub_res_block_imag_ptr,
+                                    alpha.a,
+                                    alpha.b,
+                                    m_real * 2);
         set_flag(PIPE_V, PIPE_MTE3, 0);
         wait_flag(PIPE_V, PIPE_MTE3, 0);
+        hablas_memcpy(tmp_gm_ptr, ub_res_block_imag_ptr, m_real * 2, m_real * 2);
 
-        set_flag(PIPE_V, PIPE_S, 0);
-        wait_flag(PIPE_V, PIPE_S, 0);
-        hablas_store_cvector_ub2gm(Y_ptr, ub_y_block_real_ptr, ub_wksp_block_ptr, m_real, incy, m_real*incy*2);
+        set_flag(PIPE_MTE3, PIPE_MTE2, 1);
+        wait_flag(PIPE_MTE3, PIPE_MTE2, 1);
+        _memcpy(ub_res_block_imag_ptr, tmp_gm_ptr - 1, m_real * 2);
+
+        set_flag(PIPE_MTE2, PIPE_S, 1);
+        wait_flag(PIPE_MTE2, PIPE_S, 1);
+        *(ub_res_block_imag_ptr) = 0.0;
+
+        set_flag(PIPE_S, PIPE_V, 1);
+        wait_flag(PIPE_S, PIPE_V, 1);
+        vec_add(ub_res_block_real_ptr, ub_res_block_imag_ptr, ub_res_block_real_ptr, m_real * 2);
+        
+        hablas_load_cvector_gm2ub(ub_y_block_real_ptr, Y_ptr, ub_wksp_block_ptr, m_real, incy);
+        set_flag(PIPE_MTE2, PIPE_V, 2);
+        wait_flag(PIPE_MTE2, PIPE_V, 2);
+        hablas_complex_to_real_imag(ub_y_block_real_ptr, ub_y_block_real_ptr, ub_separate_vector_ptr, m_real_pad, 1, m_real, 1);
+
+        hablas_load_cvector_gm2ub(ub_y_block_imag_ptr, Y_ptr + 1, ub_wksp_block_ptr, m_real, incy);   
+        set_flag(PIPE_MTE2, PIPE_V, 3);
+        wait_flag(PIPE_MTE2, PIPE_V, 3);
+        hablas_complex_to_real_imag(ub_y_block_imag_ptr, ub_y_block_imag_ptr, ub_separate_vector_ptr, m_real_pad, 1, m_real, 1);
+        
+        set_flag(PIPE_V, PIPE_S, 3);
+        wait_flag(PIPE_V, PIPE_S, 3);
+        hablas_complex_vector_scalar_mul(ub_tmp_block_ptr,
+                                        ub_tmp_block_ptr + 128 * 2,
+                                        ub_y_block_real_ptr,
+                                        ub_y_block_imag_ptr,
+                                        beta.a,
+                                        beta.b,
+                                        m_real * 2);
+        set_flag(PIPE_V, PIPE_MTE3, 1);
+        wait_flag(PIPE_V, PIPE_MTE3, 1);
+        hablas_memcpy(tmp_gm_ptr, ub_y_block_imag_ptr, m_real * 2, m_real * 2);
+
+        set_flag(PIPE_MTE3, PIPE_MTE2, 2);
+        wait_flag(PIPE_MTE3, PIPE_MTE2, 2);
+        _memcpy(ub_y_block_imag_ptr, tmp_gm_ptr - 1, m_real * 2);
+
+        set_flag(PIPE_MTE2, PIPE_S, 2);
+        wait_flag(PIPE_MTE2, PIPE_S, 2);
+        *(ub_y_block_imag_ptr) = 0.0;
+
+        set_flag(PIPE_S, PIPE_V, 2);
+        wait_flag(PIPE_S, PIPE_V, 2);
+        vec_add(ub_y_block_real_ptr, ub_y_block_imag_ptr, ub_y_block_real_ptr, m_real * 2); 
+        vec_add(ub_res_block_real_ptr, ub_res_block_real_ptr, ub_y_block_real_ptr, m_real * 2);
+        
+        set_flag(PIPE_V, PIPE_MTE3, 2);
+        wait_flag(PIPE_V, PIPE_MTE3, 2);
+        hablas_store_cvector_ub2gm(Y_ptr, ub_res_block_real_ptr, ub_wksp_block_ptr, m_real, incy, m_real * incy * 2);
         set_flag(PIPE_MTE3, PIPE_V, 0); // waiting for ub_res_block_real_ptr
     }
     
@@ -639,6 +602,5 @@ pipe_barrier(PIPE_ALL);
     wait_flag(PIPE_V, PIPE_MTE2, 1);
     wait_flag(PIPE_V, PIPE_MTE2, 2);
     wait_flag(PIPE_V, PIPE_MTE2, 3);
-    wait_flag(PIPE_MTE2, PIPE_MTE3, 0);
     wait_flag(PIPE_MTE3, PIPE_V, 0);
 }
