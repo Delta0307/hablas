@@ -212,7 +212,8 @@ void hablas_htrmv_kernel(int64_t uplo,
                         __gm__ half *vectorX,
                         int64_t incx,
                         __gm__ half *workspace,
-                        int64_t base_block_size)
+                        int64_t base_block_size,
+                        __gm__ half *uplo_matrix)
 // extern "C" __global__ __aicore__  
 // void hablas_htrmv_kernel(
 //                     __gm__ half *matrixA,
@@ -242,38 +243,8 @@ void hablas_htrmv_kernel(int64_t uplo,
     __ub__ half *ubR1 = ub.get_ptr(0) + 6 * UB_MATRIX_SIZE + 2 * UB_VECTOR_SIZE;
     __ub__ half *ub_uplo_matrix = ub.get_ptr(0) + 6 * UB_MATRIX_SIZE + 4 * UB_VECTOR_SIZE;
 
-
-    if (uplo) {
-        __hacl_details__::__hacl_intrinsic_move_mask(128);
-        __hacl_details__::__hacl_intrinsic_vec_dup(
-            ub_uplo_matrix, //dst
-            half(0.0), //src
-            128, // repeat times
-            128 / 16, // dst repeat stride
-            1 // dst block stride
-        );
-        for (int i = 0; i < 128; ++i) {
-            vec_dup(ub_uplo_matrix + 128 * i, half(1.0), i + 1);
-        }
-    } else {
-        __hacl_details__::__hacl_intrinsic_move_mask(128);
-        __hacl_details__::__hacl_intrinsic_vec_dup(
-            ub_uplo_matrix, //dst
-            half(1.0), //src
-            128, // repeat times
-            128 / 16, // dst repeat stride
-            1 // dst block stride
-        );
-        for (int i = 0; i < 128; ++i) {
-            set_flag(PIPE_S, PIPE_V, 2);
-            wait_flag(PIPE_S, PIPE_V, 2);
-            vec_dup(ub_uplo_matrix + 128 * i, half(0.0), i + 1);
-            set_flag(PIPE_V, PIPE_S, 2);
-            wait_flag(PIPE_V, PIPE_S, 2);
-            *(ub_uplo_matrix + 128 * i + i) = 1.0;
-        }
-    }
-// pipe_barrier(PIPE_ALL);
+    _memcpy(ub_uplo_matrix, uplo_matrix, 128 * 128);
+    pipe_barrier(PIPE_MTE2);
 
     int64_t m = base_block_size;
 

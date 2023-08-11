@@ -3,6 +3,7 @@
 
 extern char hablas_hgemm_kernel;
 extern char hablas_hgemm_batched_kernel;
+extern char hablas_hgemm_batched_b1024_kernel;
 extern char hablas_hgemm_strided_batched_kernel;
 extern char hablas_hsyrk_kernel;
 extern char hablas_hsyr2k_kernel;
@@ -142,8 +143,10 @@ rtError_t hablasHgemmBatched(hablasHandle_t handle,
     rtStream_t stream;
     hablasGetStream(handle, &stream);
     const char *func_name = "hablas_hgemm_batched_kernel";
+    const char *func_name_b1024 = "hablas_hgemm_batched_b1024_kernel";
     uint64_t blockDim = batch_count * ((M - 1) / 256 + 1) * ((N - 1) / 256 + 1);
     error = registerKernel(hablas_hgemm_batched_kernel, func_name);
+    error = registerKernel(hablas_hgemm_batched_b1024_kernel, func_name_b1024);
 
     struct KernelArgs
     {
@@ -182,8 +185,12 @@ rtError_t hablasHgemmBatched(hablasHandle_t handle,
     args.ldc = ldc;
     args.batch_count = batch_count;
 
-    error = rtKernelLaunch(func_name, blockDim, (void *)&args,
-                           sizeof(args), NULL, stream);
+    if (batch_count <= 512) {
+        error = rtKernelLaunch((void *)func_name, blockDim, (void *)&args, sizeof(args), NULL, stream);
+    } else {
+        error = rtKernelLaunch((void *)func_name_b1024, blockDim, (void *)&args, sizeof(args), NULL, stream);
+    }
+
     if (error == RT_ERROR_NONE)
     {
         printf("[SUCCESS]rtKernelLaunch succeed!\n");
@@ -718,9 +725,45 @@ rtError_t hablasHtrmv(hablasHandle_t handle,
         int64_t incx;
         void *workspace;
         int64_t base_block_size;
+        void *uplo_matrix;
     };
     void *workspace = nullptr;
     error = rtMalloc((void **)&workspace, (int64_t)M * sizeof(__fp16) + 16, RT_MEMORY_HBM);
+    void *uplo_matrix_device = nullptr;
+    error = rtMalloc((void **)&uplo_matrix_device, 128 * 128 * sizeof(__fp16), RT_MEMORY_HBM);
+
+    void *uplo_matrix_host = nullptr;
+    rtMallocHost(&uplo_matrix_host, 128 * 128 * sizeof(__fp16));
+
+    __fp16* uplo_matrix_host_fp16 = reinterpret_cast<__fp16*> (uplo_matrix_host);
+    
+    if (uplo == 1) {
+        for (int i = 0; i < 128; ++i) {
+            for (int j = 0; j < 128; ++j) {
+                if (j <= i) {
+                    *(uplo_matrix_host_fp16 + i * 128 + j) = 1;
+                } else {
+                    *(uplo_matrix_host_fp16 + i * 128 + j) = 0;
+                }
+            }
+        }
+    } else {
+        for (int i = 0; i < 128; ++i) {
+            for (int j = 0; j < 128; ++j) {
+                if (j >= i) {
+                    *(uplo_matrix_host_fp16 + i * 128 + j) = 1;
+                } else {
+                    *(uplo_matrix_host_fp16 + i * 128 + j) = 0;
+                }
+            }
+        }
+    }
+    error = rtMemcpy(uplo_matrix_device,
+                     sizeof(__fp16) * 128 * 128,
+                     uplo_matrix_host,
+                     sizeof(__fp16) * 128 * 128,
+                     RT_MEMCPY_HOST_TO_DEVICE);
+
 
     KernelArgs args;
     if (uplo == HABLAS_FILL_MODE_LOWER)
@@ -757,6 +800,7 @@ rtError_t hablasHtrmv(hablasHandle_t handle,
     args.x = X;
     args.incx = incx;
     args.workspace = workspace;
+    args.uplo_matrix = uplo_matrix_device;
 
     int base_block_size = 128;
     while (M % base_block_size < 16 && M % base_block_size > 0 && base_block_size > 16)
@@ -1133,6 +1177,7 @@ rtError_t hablasCgemv(hablasHandle_t handle,
         void *Y;
         int64_t incy;
         void *tmp_gm;
+        int64_t block_m;
     };
     KernelArgs args;
     if (trans == HABLAS_OP_N)
@@ -1159,6 +1204,25 @@ rtError_t hablasCgemv(hablasHandle_t handle,
     args.Y = vectorY;
     args.incy = incy;
     args.tmp_gm = tmp_gm;
+
+    int mm = 96;
+    if (trans == 0) {
+        int r = M / 32;
+        if (r < 96) {
+            if (r % 8 == 0) {
+                mm = r + 8;
+            } else {
+                mm = (r + 7) / 8 * 8;
+            }
+        }
+    } else {
+        while ((mm > 8) && ((N + (mm - 8) - 1) / (mm - 8) <= 30)) {
+            mm -= 8;
+        }
+    }
+    
+    args.block_m = mm;
+
 
     error = rtKernelLaunch(func_name, blockDim, (void *)&args,
                            sizeof(args), NULL, stream);

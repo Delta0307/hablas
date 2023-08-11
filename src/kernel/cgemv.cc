@@ -381,7 +381,8 @@ extern "C" __global__ __aicore__ void hablas_cgemv_kernel(
 	__gm__ float *beta_i,
 	__gm__ float *Y,
 	int64_t incy,
-    __gm__ float *tmp_gm)
+    __gm__ float *tmp_gm,
+    int64_t block_m)
 {
 	Vector<float_8, UB_MATRIX_SIZE / 8 * 2, HACL_UB> ub_a_block_real;
     Vector<float_8, UB_MATRIX_SIZE / 8 * 2, HACL_UB> ub_a_block_imag;
@@ -416,9 +417,10 @@ pipe_barrier(PIPE_ALL);
     int64_t m = M_SIZE; // 基块大小
     int64_t k = K_SIZE;
 
-    while ((m > 16) && ((trans == 0 && (M + (m-16) - 1) / (m-16) <= 30 )|| (trans != 0 && (N + (m-16) - 1) / (m-16) <= 30))) {
-        m -= 16;
-    }
+    // while ((m > 16) && ((trans == 0 && (M + (m-16) - 1) / (m-16) <= 30 )|| (trans != 0 && (N + (m-16) - 1) / (m-16) <= 30))) {
+    //     m -= 16;
+    // }
+    m = block_m;
 
     int64_t m_tiles  = (M + m - 1) / m;
     int64_t k_loop   = (N + k - 1) / k;

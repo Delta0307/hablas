@@ -1,5 +1,5 @@
 #include "tools.h"
-#define UB_HALF_56KB 56 * 1024 / 2
+#define UB_HALF_60KB 60 * 1024 / 2
 
 #ifndef CAMODEL_PROFILING
 extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(hablasOperation_t transA,
@@ -38,20 +38,20 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
     half beta = 1.0;
     int64_t batch_count = 2;
 #endif
-    Vector<half_16, 224 * 1024 / 2 / 16, HACL_UB> ub;
+    Vector<half_16, 240 * 1024 / 2 / 16, HACL_UB> ub;
 
     __ub__ half *ubA1 = ub.get_ptr(0);
-    __ub__ half *ubA2 = ubA1 + UB_HALF_56KB;
-    __ub__ half *ubB1 = ubA2 + UB_HALF_56KB;
-    __ub__ half *ubB2 = ubB1 + UB_HALF_56KB;
+    __ub__ half *ubA2 = ubA1 + UB_HALF_60KB;
+    __ub__ half *ubB1 = ubA2 + UB_HALF_60KB;
+    __ub__ half *ubB2 = ubB1 + UB_HALF_60KB;
 
     __ub__ half *ub_buffer0 = ub.get_ptr(0);
-    __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_56KB;
+    __ub__ half *ub_buffer1 = ub_buffer0 + 2 * UB_HALF_60KB;
 
-    Vector<int64_4, 32 * 1024 / 8 / 4, HACL_UB> list;
+    Vector<int64_4, 16 * 1024 / 8 / 4, HACL_UB> list;
     __ub__ int64_t *listA = list.get_ptr(0);
-    __ub__ int64_t *listB = listA + 1024;
-    __ub__ int64_t *listC = listA + 2048;
+    __ub__ int64_t *listB = listA + 512;
+    __ub__ int64_t *listC = listA + 1024;
 
     int64_t len = ((batch_count * 8) & 0xFFFFFFE0) + 32;
 #ifndef CAMODEL_PROFILING
@@ -69,8 +69,8 @@ extern "C" __global__ __aicore__ void hablas_hgemm_batched_kernel(__gm__ int64_t
     *(listC + 1) = (int64_t)matrixC2;
 #endif
 
-    int64_t m = 224;
-    int64_t n = 224;
+    int64_t m = 240;
+    int64_t n = 240;
     int64_t k = 128;
 
     int64_t m_remain = M % m;

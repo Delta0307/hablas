@@ -203,9 +203,6 @@ hablas_matrix_vector_muls_notrans(__ub__ float *dst,
 {
     for (int64_t n_idx = 0; n_idx < n_real; ++n_idx) {
         float t = *(src1 + n_idx * 2);
-        set_flag(PIPE_S, PIPE_V, 3);
-        wait_flag(PIPE_S, PIPE_V, 3);
-        if (flag) t = -t; 
         vec_axpy(dst, src0 + m_real_pad * n_idx, t, m_real);
     }
 }
@@ -295,12 +292,17 @@ hablas_complex_muls_notrans(__ub__ float *real_dst,
                             int64_t m_real,
                             int64_t n_real,
                             int64_t m_real_pad,
-                            int64_t n_real_pad) 
+                            int64_t n_real_pad,
+                            __ub__ float *axpy_space) 
 {
     hablas_matrix_vector_muls_notrans(real_dst, real_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(real_dst, imag_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 1);
+    vec_dup(axpy_space, float(0), m_real);
+    hablas_matrix_vector_muls_notrans(axpy_space, imag_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    vec_sub(real_dst, real_dst, axpy_space, m_real);
     hablas_matrix_vector_muls_notrans(imag_dst, real_src0, imag_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
-    hablas_matrix_vector_muls_notrans(imag_dst, imag_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    vec_dup(axpy_space, float(0), m_real);
+    hablas_matrix_vector_muls_notrans(axpy_space, imag_src0, real_src1, m_real, n_real, m_real_pad, n_real_pad, 0);
+    vec_add(imag_dst, imag_dst, axpy_space, m_real);
 }
 
 HACL_INLINE __aicore__ void hablas_fill_zero(__ub__ float *dst,
@@ -393,6 +395,8 @@ void hablas_csymv_kernel(int64_t uplo,
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_y_block_imag;
 
     Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_separate_vector;
+    Vector<float_8, UB_VECTOR_SIZE / 8 * 2, HACL_UB> ub_axpy_space;
+
 
     __ub__ float *ub_a_block_real_ptr = ub_a_block_real.get_ptr(0);
     __ub__ float *ub_a_block_imag_ptr = ub_a_block_imag.get_ptr(0);
@@ -412,6 +416,8 @@ void hablas_csymv_kernel(int64_t uplo,
     __ub__ float *ub_tmp_block_ptr = ub_tmp_block.get_ptr(0);
     // 中间存储空间 用来搬运向量
     __ub__ float *ub_wksp_block_ptr = ub_wksp_block.get_ptr(0);
+    // 中间存储空间 存储中间运算结果
+    __ub__ float *ub_axpy_space_ptr = ub_axpy_space.get_ptr(0);
 
 pipe_barrier(PIPE_ALL);
     vec_dup(ub_separate_vector_ptr, float(0), UB_VECTOR_SIZE * 2);
@@ -562,7 +568,7 @@ pipe_barrier(PIPE_ALL);
                                             ub_x_block_real_ptr,
                                             ub_x_block_imag_ptr,
                                             m_real * 2, k_real,
-                                            m_real_pad * 2, k_real_pad);
+                                            m_real_pad * 2, k_real_pad, ub_axpy_space_ptr);
             }
             set_flag(PIPE_V, PIPE_MTE2, 0); // ub_a_block_real_ptr done
             set_flag(PIPE_V, PIPE_MTE2, 1); // ub_a_block_imag_ptr done
