@@ -533,6 +533,67 @@ rtError_t hablasHsymv(hablasHandle_t handle,
     uint64_t blockDim = CORENUM;
     error = registerKernel(hablas_hsymv_kernel, func_name);
 
+    __fp16 *ma = new __fp16[256];
+    __fp16 *ma_dia = new __fp16[256];
+
+    if(uplo == HABLAS_FILL_MODE_LOWER)
+    {
+        for(int64_t i = 0; i < 16; i++)
+        {
+            for(int64_t j = 0; j < 16; j++)
+            {
+                if(j < i)
+                {
+                    *(ma_dia + i * 16 + j) = 0.0; 
+                    *(ma + i * 16 + j) = 0.0; 
+                }
+                else if(j == i)
+                {
+                    *(ma_dia + i * 16 + j) = 0.0; 
+                    *(ma + i * 16 + j) = 1.0; 
+                }
+                else
+                {
+                    *(ma_dia + i * 16 + j) = 1.0; 
+                    *(ma + i * 16 + j) = 1.0; 
+                }
+            }
+        }
+    }
+    else if(uplo == HABLAS_FILL_MODE_UPPER)
+    {
+        for(int64_t i = 0; i < 16; i++)
+        {   
+             for(int64_t j = 0; j < 16; j++)
+            {
+                if(j < i)
+                {
+                    *(ma_dia + i * 16 + j) = 1.0; 
+                    *(ma + i * 16 + j) = 1.0; 
+                }
+                else if(j == i)
+                {
+                    *(ma_dia + i * 16 + j) = 0.0; 
+                    *(ma + i * 16 + j) = 1.0; 
+                }
+                else
+                {
+                    *(ma_dia + i * 16 + j) = 0.0; 
+                    *(ma + i * 16 + j) = 0.0; 
+                }
+            }
+        }
+    }
+    
+    void *mask = nullptr;
+    error = rtMalloc((void **)&mask, 256 * sizeof(__fp16), RT_MEMORY_HBM);
+    void *mask_dia = nullptr;
+    error = rtMalloc((void **)&mask_dia, 256 * sizeof(__fp16), RT_MEMORY_HBM);
+
+    error = rtMemcpy(mask, sizeof(__fp16) * 256, ma, sizeof(__fp16) * 256, RT_MEMCPY_HOST_TO_DEVICE);
+    error = rtMemcpy(mask_dia, sizeof(__fp16) * 256, ma_dia, sizeof(__fp16) * 256, RT_MEMCPY_HOST_TO_DEVICE);
+
+    
     struct KernelArgs
     {
         hablasFillMode_t uplo;
@@ -545,6 +606,8 @@ rtError_t hablasHsymv(hablasHandle_t handle,
         __fp16 beta;
         void *y;
         int64_t incy;
+        void *mask_temp;
+        void *mask_dia_temp;
     };
     KernelArgs args;
 
@@ -558,6 +621,8 @@ rtError_t hablasHsymv(hablasHandle_t handle,
     args.beta = *beta;
     args.y = y;
     args.incy = incy;
+    args.mask_temp = mask;
+    args.mask_dia_temp = mask_dia;
 
     error = rtKernelLaunch("hablas_hsymv_kernel", blockDim, (void *)&args,
                            sizeof(args), NULL, stream);

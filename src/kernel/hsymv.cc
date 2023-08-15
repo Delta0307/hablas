@@ -12,7 +12,9 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
                                                           int64_t incx, 
                                                           half beta, 
                                                           __gm__ half *y, 
-                                                          int64_t incy)    
+                                                          int64_t incy,
+                                                          __gm__ half *mask_temp,
+                                                          __gm__ half *mask_dia_temp)     
 {
     int64_t n = 176;
     int64_t vec_k = 16;
@@ -48,42 +50,9 @@ extern "C" __global__ __aicore__ void hablas_hsymv_kernel(hablasFillMode_t uplo,
         tiles_per_core += 1;
     }
 
-    vec_dup(mask, (half)0.0);
-    vec_dup(mask_dia, (half)0.0);
+    _memcpy(mask.get_ptr(0), mask_temp, 256);
+    _memcpy(mask_dia.get_ptr(0), mask_dia_temp, 256);
 
-    if(uplo == HABLAS_FILL_MODE_LOWER)
-    {
-        for(int64_t i = 0; i < 16; i++)
-        {
-            for(int64_t j = i + 1; j < 16; j++)
-            {
-                *(mask_dia.get_ptr(0) + i * 16 + j) = (half)1.0;
-            }
-        }
-    }
-    else if(uplo == HABLAS_FILL_MODE_UPPER)
-    {
-        for(int64_t i = 0; i < 16; i++)
-        {   
-            for(int64_t j = 0; j < i; j++)
-            {
-                *(mask_dia.get_ptr(0) + i * 16 + j) = (half)1.0; 
-            }
-        }
-    }
-     
-    set_flag(PIPE_S, PIPE_V, 1);
-    wait_flag(PIPE_S, PIPE_V, 1);
-    vec_adds(mask.get_ptr(0), mask_dia.get_ptr(0), (half)0.0, 256);
-    set_flag(PIPE_V, PIPE_S, 1);
-    wait_flag(PIPE_V, PIPE_S, 1);
-    for(int64_t i = 0; i < 16; i++)
-    {
-        *(mask.get_ptr(0) + i * 16 + i) = (half)1.0;
-    }
-     
-    set_flag(PIPE_S, PIPE_MTE2, 1);
-    wait_flag(PIPE_S, PIPE_MTE2, 1);
     set_flag(PIPE_MTE3, PIPE_MTE2, 1);
 
     for (int64_t i = 0; i < tiles_per_core; i++) 
